@@ -5,7 +5,7 @@ import org.wso2.carbon.apimgt.api.AnalyticsException;
 
 public interface AnalyticsforMonetization {
     /**
-     * Create billing plan for a policy
+     * Gets Usage Data from Analytics Provider
      *
      * @param monetizationUsagePublishInfo monetization publish info
      * @return usage data from analytics provider

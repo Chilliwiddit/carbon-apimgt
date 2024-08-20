@@ -1,9 +1,11 @@
 package org.wso2.carbon.apimgt.api.model;
 
 import org.wso2.carbon.apimgt.api.APIProvider;
+import org.wso2.carbon.apimgt.api.AnalyticsException;
 import org.wso2.carbon.apimgt.api.MonetizationException;
 import org.wso2.carbon.apimgt.api.model.policy.SubscriptionPolicy;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 
 /**
@@ -104,7 +106,38 @@ public abstract class AbstractMonetization implements Monetization{
      */
     public abstract boolean publishUsageData(Object usageData, MonetizationUsagePublishInfo monetizationUsagePublishInfo) throws MonetizationException;
 
+    /**
+     * Gets Usage Data from Analytics Provider
+     *
+     * @param monetizationUsagePublishInfo monetization publish info
+     * @return usage data from analytics provider
+     * @throws AnalyticsException if the action failed
+     */
     public Object getUsageData(MonetizationUsagePublishInfo monetizationUsagePublishInfo){
-
+        String className = "org.wso2.apim.analytics.impl.ChoreoAnalyticsforMonetizationImpl";
+        String message;
+        try {
+            Class<?> callingClass = Class.forName(className);
+            AnalyticsforMonetization analyticsClass = (AnalyticsforMonetization) callingClass.getDeclaredConstructor().newInstance();
+            return analyticsClass.getUsageData(monetizationUsagePublishInfo);
+        }  catch (ClassNotFoundException e) {
+            message = "The specified class was not found";
+            throw new AnalyticsException(message, e);
+        } catch (InvocationTargetException e) {
+            message = "Error fetching usage data";
+            throw new AnalyticsException(message, e);
+        } catch (InstantiationException e) {
+            message = "Error creating class instance";
+            throw new AnalyticsException(message, e);
+        } catch (IllegalAccessException e) {
+            message = "Error getting class access";
+            throw new AnalyticsException(message, e);
+        } catch (NoSuchMethodException e) {
+            message = "Error invoking method";
+            throw new AnalyticsException(message, e);
+        } catch (ClassCastException e) {
+            message = "Error getting child class";
+            throw new AnalyticsException(message, e);
+        } //log me
     }
 }
