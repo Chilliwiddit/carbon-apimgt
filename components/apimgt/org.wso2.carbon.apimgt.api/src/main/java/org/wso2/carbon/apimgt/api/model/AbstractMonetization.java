@@ -94,7 +94,7 @@ public abstract class AbstractMonetization implements Monetization{
 
     @Override
     public boolean publishMonetizationUsageRecords(MonetizationUsagePublishInfo monetizationUsagePublishInfo) throws MonetizationException {
-        Object usageData = getUsageData(monetizationUsagePublishInfo);
+        Object usageData = getUsage(monetizationUsagePublishInfo);
         return publishUsageData(usageData, monetizationUsagePublishInfo);
     }
 
@@ -113,13 +113,13 @@ public abstract class AbstractMonetization implements Monetization{
      * @return usage data from analytics provider
      * @throws AnalyticsException if the action failed
      */
-    public Object getUsageData(MonetizationUsagePublishInfo monetizationUsagePublishInfo){
-        String className = "org.wso2.apim.analytics.impl.ChoreoAnalyticsforMonetizationImpl";
+    public Object getUsage(MonetizationUsagePublishInfo monetizationUsagePublishInfo){
+        String className = "org.wso2.apim.analytics.impl.ChoreoAnalyticsforMonetizationImpl"; //the hard-coded FQN of the implementation class, linking will be done later
         String message;
         try {
-            Class<?> callingClass = Class.forName(className);
-            AnalyticsforMonetization analyticsClass = (AnalyticsforMonetization) callingClass.getDeclaredConstructor().newInstance();
-            return analyticsClass.getUsageData(monetizationUsagePublishInfo);
+            Class<?> callingClass = Class.forName(className); //The class is gotten using the FQN
+            AnalyticsforMonetization analyticsClass = (AnalyticsforMonetization) callingClass.getDeclaredConstructor().newInstance(); //The class is called and instantiated as a child of the interface
+            return analyticsClass.getUsageData(monetizationUsagePublishInfo); //the usageData is returned from the implementation class
         }  catch (ClassNotFoundException e) {
             message = "The specified class was not found";
             throw new AnalyticsException(message, e);
@@ -138,6 +138,6 @@ public abstract class AbstractMonetization implements Monetization{
         } catch (ClassCastException e) {
             message = "Error getting child class";
             throw new AnalyticsException(message, e);
-        } //log me
+        } //handling of possible exceptions
     }
 }
