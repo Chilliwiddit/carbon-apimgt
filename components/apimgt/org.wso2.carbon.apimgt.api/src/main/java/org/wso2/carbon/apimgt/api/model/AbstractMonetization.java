@@ -94,7 +94,7 @@ public abstract class AbstractMonetization implements Monetization{
 
     @Override
     public boolean publishMonetizationUsageRecords(MonetizationUsagePublishInfo monetizationUsagePublishInfo) throws MonetizationException {
-        Object usageData = getUsage(monetizationUsagePublishInfo);
+        Object usageData = monetizationAnalyticsDataProvider(monetizationUsagePublishInfo);
         return publishUsageData(usageData, monetizationUsagePublishInfo);
     }
 
@@ -113,8 +113,8 @@ public abstract class AbstractMonetization implements Monetization{
      * @return usage data from analytics provider
      * @throws AnalyticsException if the action failed
      */
-    public Object getUsage(MonetizationUsagePublishInfo monetizationUsagePublishInfo){
-        String className = "org.wso2.apim.analytics.impl.ChoreoAnalyticsforMonetizationImpl"; //the hard-coded FQN of the implementation class, linking will be done later
+    public Object monetizationAnalyticsDataProvider(MonetizationUsagePublishInfo monetizationUsagePublishInfo) throws MonetizationException{
+        String className = "org.wso2.apim.analytics.impl.ChoreoAnalyticsforMonetizationImpl"; // todo the hard-coded FQN of the implementation class, linking will be done later
         String message;
         try {
             Class<?> callingClass = Class.forName(className); //The class is gotten using the FQN
@@ -122,22 +122,22 @@ public abstract class AbstractMonetization implements Monetization{
             return analyticsClass.getUsageData(monetizationUsagePublishInfo); //the usageData is returned from the implementation class
         }  catch (ClassNotFoundException e) {
             message = "The specified class was not found";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } catch (InvocationTargetException e) {
             message = "Error fetching usage data";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } catch (InstantiationException e) {
             message = "Error creating class instance";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } catch (IllegalAccessException e) {
             message = "Error getting class access";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } catch (NoSuchMethodException e) {
             message = "Error invoking method";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } catch (ClassCastException e) {
             message = "Error getting child class";
-            throw new AnalyticsException(message, e);
+            throw new MonetizationException(message, e);
         } //handling of possible exceptions
     }
 }
