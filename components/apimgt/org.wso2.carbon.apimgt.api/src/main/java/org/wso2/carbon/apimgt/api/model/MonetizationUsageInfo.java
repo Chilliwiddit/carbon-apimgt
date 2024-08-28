@@ -2,19 +2,29 @@ package org.wso2.carbon.apimgt.api.model;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map;
-import java.util.Map;
 
 public class MonetizationUsageInfo {
 
     Long requestCount;
     Long currentTimestamp;
-    Map<String, Object> customAttributes = new HashMap<String, Object>();
+    String apiUuid;
+    String apiName;
+    String apiVersion;
+    String tenantDomain;
+    String applicationName;
+    String applicationOwner;
+    HashMap<String, Object> customAttributes;
 
-    public MonetizationUsageInfo(Long requestCount, Map<String, Object> customAttributes, Long currentTimestamp) {
+    public MonetizationUsageInfo(Long requestCount, Long currentTimestamp, String apiUuid, String apiName, String apiVersion, String tenantDomain, String applicationName, String applicationOwner, HashMap<String, Object> customAttributes) {
         this.requestCount = requestCount;
-        this.customAttributes = customAttributes;
         this.currentTimestamp = currentTimestamp;
+        this.apiUuid = apiUuid;
+        this.apiName = apiName;
+        this.apiVersion = apiVersion;
+        this.tenantDomain = tenantDomain;
+        this.applicationName = applicationName;
+        this.applicationOwner = applicationOwner;
+        this.customAttributes = customAttributes;
     }
 
     public Long getRequestCount() {
@@ -33,11 +43,59 @@ public class MonetizationUsageInfo {
         this.currentTimestamp = currentTimestamp;
     }
 
-    public java.util.Map<String, Object> getCustomAttributes() {
+    public String getApiUuid() {
+        return apiUuid;
+    }
+
+    public void setApiUuid(String apiUuid) {
+        this.apiUuid = apiUuid;
+    }
+
+    public String getApiName() {
+        return apiName;
+    }
+
+    public void setApiName(String apiName) {
+        this.apiName = apiName;
+    }
+
+    public String getApiVersion() {
+        return apiVersion;
+    }
+
+    public void setApiVersion(String apiVersion) {
+        this.apiVersion = apiVersion;
+    }
+
+    public String getTenantDomain() {
+        return tenantDomain;
+    }
+
+    public void setTenantDomain(String tenantDomain) {
+        this.tenantDomain = tenantDomain;
+    }
+
+    public String getApplicationName() {
+        return applicationName;
+    }
+
+    public void setApplicationName(String applicationName) {
+        this.applicationName = applicationName;
+    }
+
+    public String getApplicationOwner() {
+        return applicationOwner;
+    }
+
+    public void setApplicationOwner(String applicationOwner) {
+        this.applicationOwner = applicationOwner;
+    }
+
+    public HashMap<String, Object> getCustomAttributes() {
         return customAttributes;
     }
 
-    public void setCustomAttributes(java.util.Map<String, Object> customAttributes) {
+    public void setCustomAttributes(HashMap<String, Object> customAttributes) {
         this.customAttributes = customAttributes;
     }
 }
