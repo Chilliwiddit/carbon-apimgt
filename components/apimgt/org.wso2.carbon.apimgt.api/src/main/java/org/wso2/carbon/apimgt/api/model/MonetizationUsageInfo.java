@@ -5,7 +5,6 @@ import java.util.Map;
 
 public class MonetizationUsageInfo {
 
-    Long requestCount;
     Long currentTimestamp;
     String apiUuid;
     String apiName;
@@ -14,9 +13,9 @@ public class MonetizationUsageInfo {
     String applicationName;
     String applicationOwner;
     HashMap<String, Object> customAttributes;
+    Long requestCount;
 
-    public MonetizationUsageInfo(Long requestCount, Long currentTimestamp, String apiUuid, String apiName, String apiVersion, String tenantDomain, String applicationName, String applicationOwner, HashMap<String, Object> customAttributes) {
-        this.requestCount = requestCount;
+    public MonetizationUsageInfo(Long currentTimestamp, String apiUuid, String apiName, String apiVersion, String tenantDomain, String applicationName, String applicationOwner, HashMap<String, Object> customAttributes, Long requestCount) {
         this.currentTimestamp = currentTimestamp;
         this.apiUuid = apiUuid;
         this.apiName = apiName;
@@ -25,13 +24,6 @@ public class MonetizationUsageInfo {
         this.applicationName = applicationName;
         this.applicationOwner = applicationOwner;
         this.customAttributes = customAttributes;
-    }
-
-    public Long getRequestCount() {
-        return requestCount;
-    }
-
-    public void setRequestCount(Long requestCount) {
         this.requestCount = requestCount;
     }
 
@@ -97,5 +89,13 @@ public class MonetizationUsageInfo {
 
     public void setCustomAttributes(HashMap<String, Object> customAttributes) {
         this.customAttributes = customAttributes;
+    }
+
+    public Long getRequestCount() {
+        return requestCount;
+    }
+
+    public void setRequestCount(Long requestCount) {
+        this.requestCount = requestCount;
     }
 }
