@@ -544,6 +544,8 @@ public class SynapseAnalyticsDataProvider implements AnalyticsDataProvider {
                 if (soapbody != null) {
                     byte[] size = soapbody.toString().getBytes(Charset.defaultCharset());
                     responseSize =  size.length;
+                    String responseBody = soapbody.toString();
+                    log.debug("Response Body: " + responseBody);
                 }
             }
         }
