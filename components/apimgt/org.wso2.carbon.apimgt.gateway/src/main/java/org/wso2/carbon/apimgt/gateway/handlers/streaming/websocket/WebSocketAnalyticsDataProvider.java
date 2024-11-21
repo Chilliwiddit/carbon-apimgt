@@ -23,6 +23,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.SynapseConstants;
 import org.apache.synapse.rest.RESTConstants;
+import org.json.JSONObject;
 import org.wso2.carbon.apimgt.common.analytics.collectors.AnalyticsCustomDataProvider;
 import org.wso2.carbon.apimgt.common.analytics.collectors.AnalyticsDataProvider;
 import org.wso2.carbon.apimgt.common.analytics.exceptions.DataNotFoundException;
@@ -312,7 +313,7 @@ public class WebSocketAnalyticsDataProvider implements AnalyticsDataProvider {
     }
 
     @Override
-    public Map<String, Object> getProperties() {
+    public String getProperties() {
         Map<String, Object> customProperties;
 
         if (analyticsCustomDataProvider != null) {
@@ -324,7 +325,10 @@ public class WebSocketAnalyticsDataProvider implements AnalyticsDataProvider {
         customProperties.put(Constants.API_CONTEXT_KEY, getApiContext());
         customProperties.put(Constants.RESPONSE_SIZE,
                 WebSocketUtils.getPropertyFromChannel(Constants.RESPONSE_SIZE, ctx));
-        return customProperties;
+
+        JSONObject propertiesJSON = new JSONObject(customProperties);
+
+        return propertiesJSON.toString();
     }
     
     @Override
