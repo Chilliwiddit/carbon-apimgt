@@ -29,6 +29,7 @@ import org.apache.synapse.commons.CorrelationConstants;
 import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.rest.RESTConstants;
 import org.apache.synapse.transport.passthru.util.RelayUtils;
+import org.json.JSONObject;
 import org.wso2.carbon.apimgt.api.model.OperationPolicy;
 import org.wso2.carbon.apimgt.api.model.subscription.URLMapping;
 import org.wso2.carbon.apimgt.common.analytics.collectors.AnalyticsCustomDataProvider;
@@ -400,7 +401,7 @@ public class SynapseAnalyticsDataProvider implements AnalyticsDataProvider {
     }
 
     @Override
-    public Map<String, Object> getProperties() {
+    public String getProperties() {
         Map<String, Object> customProperties;
 
         if (analyticsCustomDataProvider != null) {
@@ -412,7 +413,10 @@ public class SynapseAnalyticsDataProvider implements AnalyticsDataProvider {
         customProperties.put(Constants.API_CONTEXT_KEY, getApiContext());
         customProperties.put(Constants.RESPONSE_SIZE, getResponseSize());
         customProperties.put(Constants.RESPONSE_CONTENT_TYPE, getResponseContentType());
-        return customProperties;
+
+        JSONObject propertiesJSON = new JSONObject(customProperties);
+
+        return propertiesJSON.toString();
     }
 
     private String getApiContext() {
