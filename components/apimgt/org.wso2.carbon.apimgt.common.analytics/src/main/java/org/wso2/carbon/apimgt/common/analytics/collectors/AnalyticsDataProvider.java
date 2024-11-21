@@ -17,6 +17,7 @@
 
 package org.wso2.carbon.apimgt.common.analytics.collectors;
 
+import net.minidev.json.JSONObject;
 import org.wso2.carbon.apimgt.common.analytics.exceptions.DataNotFoundException;
 import org.wso2.carbon.apimgt.common.analytics.publishers.dto.API;
 import org.wso2.carbon.apimgt.common.analytics.publishers.dto.Application;
@@ -70,8 +71,8 @@ public interface AnalyticsDataProvider {
 
     String getEndUserIP();
 
-    default Map<String, Object> getProperties() {
-        return Collections.EMPTY_MAP;
+    default String getProperties() {
+        return new JSONObject(Collections.emptyMap()).toString();
     }
 
     Map<String, String> getMaskProperties();
