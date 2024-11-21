@@ -48,7 +48,7 @@ public class Event {
 
     private String errorType;
 
-    private Map<String, Object> properties;
+    private String properties;
 
     public API getApi() {
         return api;
@@ -154,11 +154,11 @@ public class Event {
         this.userIp = userIp;
     }
 
-    public Map<String, Object> getProperties() {
+    public String getProperties() {
         return properties;
     }
 
-    public void setProperties(Map<String, Object> properties) {
+    public void setProperties(String properties) {
         this.properties = properties;
     }
 }
