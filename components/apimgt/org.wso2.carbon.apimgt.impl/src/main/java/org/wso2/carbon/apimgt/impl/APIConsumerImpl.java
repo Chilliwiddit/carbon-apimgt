@@ -805,6 +805,22 @@ public class APIConsumerImpl extends AbstractAPIManager implements APIConsumer {
         return isSubscribed;
     }
 
+    public boolean isMonetizationClassPresent(){
+        APIManagerConfiguration configuration = getAPIManagerConfiguration();
+        if (configuration == null) {
+            log.error("API Manager configuration is not initialized.");
+            return false;
+        } else {
+            String monetizationImplClass = configuration.getMonetizationConfigurationDto().getMonetizationImpl();
+            if (monetizationImplClass == null) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+    }
+
     /**
      * This methods loads the monetization implementation class
      *
@@ -812,7 +828,6 @@ public class APIConsumerImpl extends AbstractAPIManager implements APIConsumer {
      * @throws APIManagementException if failed to load monetization implementation class
      */
     public Monetization getMonetizationImplClass() throws APIManagementException {
-
         APIManagerConfiguration configuration = getAPIManagerConfiguration();
         Monetization monetizationImpl = null;
         if (configuration == null) {
@@ -880,8 +895,14 @@ public class APIConsumerImpl extends AbstractAPIManager implements APIConsumer {
             String applicationName = application.getName();
 
             try {
-                WorkflowExecutor addSubscriptionWFExecutor =
-                        getWorkflowExecutor(WorkflowConstants.WF_TYPE_AM_SUBSCRIPTION_CREATION);
+                WorkflowExecutor addSubscriptionWFExecutor;
+                if (isMonetizationClassPresent()){
+                    Monetization monetizationImpl = getMonetizationImplClass();
+                    addSubscriptionWFExecutor = monetizationImpl.getCreationWorkflowExecutor();
+                } else {
+                    addSubscriptionWFExecutor =
+                            getWorkflowExecutor(WorkflowConstants.WF_TYPE_AM_SUBSCRIPTION_CREATION);
+                }
 
                 SubscriptionWorkflowDTO workflowDTO = new SubscriptionWorkflowDTO();
                 workflowDTO.setStatus(WorkflowStatus.CREATED);
@@ -1245,10 +1266,18 @@ public class APIConsumerImpl extends AbstractAPIManager implements APIConsumer {
 
         try {
             SubscriptionWorkflowDTO workflowDTO;
+            WorkflowExecutor removeSubscriptionWFExecutor;
+
+            if (isMonetizationClassPresent()){
+                Monetization monetizationImpl = getMonetizationImplClass();
+                removeSubscriptionWFExecutor = monetizationImpl.getRemovalWorkflowExecutor();
+            } else {
+                removeSubscriptionWFExecutor = getWorkflowExecutor(
+                        WorkflowConstants.WF_TYPE_AM_SUBSCRIPTION_DELETION);
+            }
+
             WorkflowExecutor createSubscriptionWFExecutor = getWorkflowExecutor(
                     WorkflowConstants.WF_TYPE_AM_SUBSCRIPTION_CREATION);
-            WorkflowExecutor removeSubscriptionWFExecutor = getWorkflowExecutor(
-                    WorkflowConstants.WF_TYPE_AM_SUBSCRIPTION_DELETION);
             String workflowExtRef = apiMgtDAO
                     .getExternalWorkflowReferenceForSubscription(identifier, applicationId, organization);
 
