@@ -19,6 +19,7 @@ package org.wso2.carbon.apimgt.api.model;
 import org.wso2.carbon.apimgt.api.APIProvider;
 import org.wso2.carbon.apimgt.api.MonetizationException;
 import org.wso2.carbon.apimgt.api.model.policy.SubscriptionPolicy;
+import org.wso2.carbon.apimgt.impl.workflow.WorkflowExecutor;
 
 import java.util.Map;
 
@@ -116,5 +117,19 @@ public interface Monetization {
      */
     boolean publishMonetizationUsageRecords(MonetizationUsagePublishInfo monetizationUsagePublishInfo)
             throws MonetizationException;
+
+    /**
+     * Return an instance of the Subscription Creation Workflow Executor to be used in APIConsumerImpl
+     *
+     * @return WorkflowExecutor
+     */
+    WorkflowExecutor getCreationWorkflowExecutor();
+
+    /**
+     * Return an instance of the Subscription Deletion Workflow Executor to be used in APIConsumerImpl
+     *
+     * @return WorkflowExecutor
+     */
+    WorkflowExecutor getRemovalWorkflowExecutor();
 
 }
