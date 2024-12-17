@@ -38,6 +38,13 @@ public abstract class AbstractMonetization implements Monetization {
     public abstract boolean publishUsageData(Object usageData, MonetizationUsagePublishInfo monetizationUsagePublishInfo) throws MonetizationException;
 
     /**
+     * Returns an instance of the MonetizationSusbscription class
+     *
+     * @return MonetizationSubscription
+     */
+    public abstract MonetizationSubscription getMonetizationSubscriptionClass();
+
+    /**
      * Gets Usage Data from Analytics Provider
      *
      * @param monetizationUsagePublishInfo monetization publish info
