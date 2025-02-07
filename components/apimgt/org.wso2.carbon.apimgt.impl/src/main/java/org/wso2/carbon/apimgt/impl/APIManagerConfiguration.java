@@ -29,6 +29,7 @@ import org.apache.commons.logging.LogFactory;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.wso2.carbon.apimgt.api.APIManagementException;
+import org.wso2.carbon.apimgt.api.dto.GatewayVisibilityPermissionConfigurationDTO;
 import org.wso2.carbon.apimgt.api.model.APIPublisher;
 import org.wso2.carbon.apimgt.api.model.APIStore;
 import org.wso2.carbon.apimgt.api.model.Environment;
@@ -44,6 +45,7 @@ import org.wso2.carbon.apimgt.impl.dto.EventHubConfigurationDto;
 import org.wso2.carbon.apimgt.impl.dto.ExtendedJWTConfigurationDto;
 import org.wso2.carbon.apimgt.impl.dto.GatewayArtifactSynchronizerProperties;
 import org.wso2.carbon.apimgt.impl.dto.GatewayCleanupSkipList;
+import org.wso2.carbon.apimgt.impl.dto.OrgAccessControl;
 import org.wso2.carbon.apimgt.impl.dto.RedisConfig;
 import org.wso2.carbon.apimgt.impl.dto.ThrottleProperties;
 import org.wso2.carbon.apimgt.impl.dto.TokenValidationDto;
@@ -62,6 +64,7 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -133,6 +136,15 @@ public class APIManagerConfiguration {
     private static String certificateBoundAccessEnabled;
     private GatewayCleanupSkipList gatewayCleanupSkipList = new GatewayCleanupSkipList();
     private RedisConfig redisConfig = new RedisConfig();
+    private OrgAccessControl orgAccessControl = new OrgAccessControl();
+    public OrgAccessControl getOrgAccessControl() {
+        return orgAccessControl;
+    }
+
+    public void setOrgAccessControl(OrgAccessControl orgAccessControl) {
+        this.orgAccessControl = orgAccessControl;
+    }
+
     private Map<String, List<String>> restApiJWTAuthAudiences = new HashMap<>();
     private JSONObject subscriberAttributes = new JSONObject();
     private static Map<String, String> analyticsMaskProps;
@@ -670,6 +682,8 @@ public class APIManagerConfiguration {
                 setAiConfiguration(element);
             } else if (APIConstants.TokenValidationConstants.TOKEN_VALIDATION_CONFIG.equals(localName)) {
                 setTokenValidation(element);
+            } else if (APIConstants.ORG_BASED_ACCESS_CONTROL.equals(localName)) {
+                setOrgBasedAccessControlConfigs(element);
             } else if (APIConstants.HASHING.equals(localName)) {
                 setHashingAlgorithm(element);
             } else if (APIConstants.TransactionCounter.TRANSACTIONCOUNTER.equals(localName)) {
@@ -683,6 +697,25 @@ public class APIManagerConfiguration {
         }
     }
 
+    private void setOrgBasedAccessControlConfigs(OMElement element) {
+        OMElement orgEnableElement =
+                element.getFirstChildWithName(new QName(APIConstants.ORG_BASED_ACCESS_CONTROL_ENABLE));
+        if (orgEnableElement != null) {
+            orgAccessControl.setEnabled(Boolean.parseBoolean(orgEnableElement.getText()));
+        }
+        
+        OMElement orgNameElement =
+                element.getFirstChildWithName(new QName(APIConstants.ORG_BASED_ACCESS_CONTROL_ORG_NAME_CLAIM));
+        if (orgNameElement != null) {
+            orgAccessControl.setOrgNameLocalClaim(orgNameElement.getText());;
+        }
+        OMElement orgIdElement =
+                element.getFirstChildWithName(new QName(APIConstants.ORG_BASED_ACCESS_CONTROL_ORG_ID_CLAIM));
+        if (orgIdElement != null) {
+            orgAccessControl.setOrgIdLocalClaim(orgIdElement.getText());
+        }
+    }
+        
     public boolean getTransactionCounterProperties() {
         return isTransactionCounterEnabled;
     }
@@ -762,6 +795,24 @@ public class APIManagerConfiguration {
             gatewayType = APIConstants.API_GATEWAY_TYPE_REGULAR;
         }
         environment.setGatewayType(gatewayType);
+        GatewayVisibilityPermissionConfigurationDTO permissionsDTO = new GatewayVisibilityPermissionConfigurationDTO();
+        OMElement visibility = environmentElem.getFirstChildWithName(new QName(APIConstants.API_GATEWAY_VISIBILITY));
+        List<String> visibilityRoles = new LinkedList<>();
+        String[] visibilityRolesArray;
+        if (visibility == null || StringUtils.isEmpty(visibility.getText())) {
+            permissionsDTO.setPermissionType(APIConstants.PERMISSION_NOT_RESTRICTED);
+            environment.setVisibility(APIConstants.PERMISSION_NOT_RESTRICTED);
+            visibilityRolesArray = new String[]{APIConstants.EVERYONE_ROLE};
+        } else {
+            String visibilityString = visibility.getText();
+            visibilityRolesArray = visibilityString.split(",");
+            Collections.addAll(visibilityRoles, visibilityRolesArray);
+            permissionsDTO.setPermissionType(APIConstants.PERMISSION_ALLOW);
+            permissionsDTO.setRoles(visibilityRoles);
+            environment.setVisibility(visibilityString);
+        }
+        environment.setVisibility(visibilityRolesArray);
+        environment.setPermissions(permissionsDTO);
         if (StringUtils.isEmpty(environment.getDisplayName())) {environment.setDisplayName(environment.getName());}
         environment.setServerURL(APIUtil.replaceSystemProperty(environmentElem.getFirstChildWithName(new QName(
                         APIConstants.API_GATEWAY_SERVER_URL)).getText()));

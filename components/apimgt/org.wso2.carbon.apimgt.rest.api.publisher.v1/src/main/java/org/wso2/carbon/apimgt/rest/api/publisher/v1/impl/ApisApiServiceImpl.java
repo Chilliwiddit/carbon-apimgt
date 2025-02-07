@@ -79,13 +79,13 @@ import org.wso2.carbon.apimgt.rest.api.util.exception.BadRequestException;
 import org.wso2.carbon.apimgt.rest.api.util.utils.RestApiUtil;
 import org.wso2.carbon.core.util.CryptoException;
 import org.wso2.carbon.core.util.CryptoUtil;
-import org.wso2.carbon.utils.multitenancy.MultitenantConstants;
 
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.StreamingOutput;
 import java.io.*;
+import java.lang.reflect.Array;
 import java.net.*;
 import java.nio.file.Files;
 import java.util.*;
@@ -214,9 +214,10 @@ public class ApisApiServiceImpl implements ApisApiService {
         APIDTO createdApiDTO;
         try {
             String organization = RestApiUtil.getValidatedOrganization(messageContext);
+            OrganizationInfo orgInfo = RestApiUtil.getOrganizationInfo(messageContext);
             API createdApi = PublisherCommonUtils
                     .addAPIWithGeneratedSwaggerDefinition(body, oasVersion, RestApiCommonUtil.getLoggedInUsername(),
-                            organization);
+                            organization, orgInfo );
             createdApiDTO = APIMappingUtil.fromAPItoDTO(createdApi);
             //This URI used to set the location header of the POST response
             createdApiUri = new URI(RestApiConstants.RESOURCE_PATH_APIS + "/" + createdApiDTO.getId());
@@ -238,7 +239,17 @@ public class ApisApiServiceImpl implements ApisApiService {
             MessageContext messageContext) throws APIManagementException {
         APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
         String organization = RestApiUtil.getValidatedOrganization(messageContext);
+        OrganizationInfo organizationInfo = RestApiUtil.getOrganizationInfo(messageContext);
         APIDTO apiToReturn = getAPIByID(apiId, apiProvider, organization);
+        if (apiToReturn.getVisibleOrganizations() != null && organizationInfo != null
+                && organizationInfo.getOrganizationId() != null) {
+            // Remove current organization id from the visible org list.
+            List<String> orglist = apiToReturn.getVisibleOrganizations();
+            ArrayList<String> newOrgList = new ArrayList<String>(orglist);
+            newOrgList.remove(organizationInfo.getOrganizationId());
+            apiToReturn.setVisibleOrganizations(newOrgList);
+        }
+
         return Response.ok().entity(apiToReturn).build();
     }
 
@@ -708,6 +719,7 @@ public class ApisApiServiceImpl implements ApisApiService {
 
         try {
             String organization = RestApiUtil.getValidatedOrganization(messageContext);
+            OrganizationInfo organizationInfo = RestApiUtil.getOrganizationInfo(messageContext);
             //validate if api exists
             CommonUtils.validateAPIExistence(apiId);
             if (!PublisherCommonUtils.validateEndpointConfigs(body)) {
@@ -739,9 +751,10 @@ public class ApisApiServiceImpl implements ApisApiService {
             APIProvider apiProvider = RestApiCommonUtil.getProvider(username);
             API originalAPI = apiProvider.getAPIbyUUID(apiId, organization);
             originalAPI.setOrganization(organization);
+            
             //validate API update operation permitted based on the LC state
             validateAPIOperationsPerLC(originalAPI.getStatus());
-            API updatedApi = PublisherCommonUtils.updateApi(originalAPI, body, apiProvider, tokenScopes);
+            API updatedApi = PublisherCommonUtils.updateApi(originalAPI, body, apiProvider, tokenScopes, organizationInfo);
             return Response.ok().entity(APIMappingUtil.fromAPItoDTO(updatedApi)).build();
         } catch (APIManagementException e) {
             //Auth failure occurs when cross tenant accessing APIs. Sends 404, since we don't need
@@ -3513,31 +3526,54 @@ public class ApisApiServiceImpl implements ApisApiService {
      * @param type APIType
      * @param fileInputStream input file
      * @param fileDetail file Detail
+     * @param url URL of the schema or endpoint
+     * @param schema graphQL schema definition
      * @param additionalProperties api object as string format
      * @param ifMatch If--Match header value
      * @param messageContext messageContext
      * @return Response with GraphQL API
      */
     @Override
-    public Response importGraphQLSchema(String ifMatch, String type, InputStream fileInputStream,
-                                Attachment fileDetail, String additionalProperties, MessageContext messageContext) {
-        APIDTO additionalPropertiesAPI = null;
-        String schema = "";
+    public Response importGraphQLSchema(String ifMatch, String type, InputStream fileInputStream, Attachment fileDetail,
+            String url, String schema, String additionalProperties, MessageContext messageContext) {
 
+        APIDTO additionalPropertiesAPI = null;
+        String graphQLSchema = null;
         try {
-            if (fileInputStream == null || StringUtils.isBlank(additionalProperties)) {
-                String errorMessage = "GraphQL schema and api details cannot be empty.";
+            if (StringUtils.isBlank(additionalProperties)) {
+                String errorMessage = "Api details cannot be empty.";
                 RestApiUtil.handleBadRequest(errorMessage, log);
             } else {
-                schema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
+                additionalPropertiesAPI = new ObjectMapper().readValue(additionalProperties, APIDTO.class);
             }
 
-            if (!StringUtils.isBlank(additionalProperties) && !StringUtils.isBlank(schema) && log.isDebugEnabled()) {
+            if (schema != null && !schema.isEmpty()) {
+                graphQLSchema = schema;
+            } else if (fileInputStream != null && !StringUtils.isBlank(additionalProperties)) {
+                graphQLSchema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
+            } else if (url != null) {
+                graphQLSchema = PublisherCommonUtils.retrieveGraphQLSchemaFromURL(url);
+            } else {
+                Map<String, Object> endpointConfigurationMap = (Map<String, Object>) additionalPropertiesAPI.getEndpointConfig();
+                String endpointURL = "";
+                if (endpointConfigurationMap.containsKey("production_endpoints")) {
+                    Map<String, String> productionEndpoints = (Map<String, String>) endpointConfigurationMap.get(
+                            "production_endpoints");
+                    endpointURL = productionEndpoints.get("url");
+                }
+                graphQLSchema = PublisherCommonUtils.generateGraphQLSchemaFromIntrospection(endpointURL);
+            }
+
+            if (graphQLSchema == null || graphQLSchema.isEmpty()) {
+                throw new APIManagementException("GraphQL Schema cannot be empty or null to validate it",
+                        ExceptionCodes.GRAPHQL_SCHEMA_CANNOT_BE_NULL);
+            }
+
+            if (!StringUtils.isBlank(additionalProperties) && !StringUtils.isBlank(graphQLSchema) && log.isDebugEnabled()) {
                 log.debug("Deseriallizing additionalProperties: " + additionalProperties + "/n"
-                        + "importing schema: " + schema);
+                        + "importing schema: " + graphQLSchema);
             }
 
-            additionalPropertiesAPI = new ObjectMapper().readValue(additionalProperties, APIDTO.class);
             APIUtil.validateCharacterLengthOfAPIParams(additionalPropertiesAPI.getName(),
                     additionalPropertiesAPI.getVersion(), additionalPropertiesAPI.getContext(),
                     RestApiCommonUtil.getLoggedInUsername());
@@ -3556,7 +3592,7 @@ public class ApisApiServiceImpl implements ApisApiService {
             //adding the api
             API createdApi = apiProvider.addAPI(apiToAdd);
 
-            apiProvider.saveGraphqlSchemaDefinition(createdApi.getUuid(), schema, organization);
+            apiProvider.saveGraphqlSchemaDefinition(createdApi.getUuid(), graphQLSchema, organization);
 
             APIDTO createdApiDTO = APIMappingUtil.fromAPItoDTO(createdApi);
 
@@ -3623,21 +3659,26 @@ public class ApisApiServiceImpl implements ApisApiService {
 
     /**
      * Validate graphQL Schema
+     *
+     * @param useIntrospection use introspection or not
      * @param fileInputStream  input file
-     * @param fileDetail file Detail
-     * @param messageContext messageContext
+     * @param fileDetail       file Detail
+     * @param url              URL of the schema or endpoint
+     * @param messageContext   messageContext
      * @return Validation response
      */
     @Override
-    public Response validateGraphQLSchema(InputStream fileInputStream, Attachment fileDetail,
-                                          MessageContext messageContext) {
-
+    public Response validateGraphQLSchema(Boolean useIntrospection, InputStream fileInputStream, Attachment fileDetail,
+            String url, MessageContext messageContext) {
+        String schema = null;
+        String filename = null;
         GraphQLValidationResponseDTO validationResponse = new GraphQLValidationResponseDTO();
-        String filename = fileDetail.getContentDisposition().getFilename();
-
         try {
-            String schema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
-            validationResponse = PublisherCommonUtils.validateGraphQLSchema(filename, schema);
+            if (fileDetail != null) {
+                filename = fileDetail.getContentDisposition().getFilename();
+                schema = IOUtils.toString(fileInputStream, RestApiConstants.CHARSET);
+            }
+            validationResponse = PublisherCommonUtils.validateGraphQLSchema(filename, schema, url, useIntrospection);
         } catch (IOException | APIManagementException e) {
             validationResponse.setIsValid(false);
             validationResponse.setErrorMessage(e.getMessage());
@@ -3675,7 +3716,7 @@ public class ApisApiServiceImpl implements ApisApiService {
 
     @Override
     public Response getAPISubscriptionPolicies(String apiId, String xWSO2Tenant, String ifNoneMatch, Boolean isAiApi,
-            MessageContext messageContext) throws APIManagementException {
+            String organizationID, MessageContext messageContext) throws APIManagementException {
         APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
         String organization = RestApiUtil.getValidatedOrganization(messageContext);
         APIDTO apiInfo = getAPIByID(apiId, apiProvider, organization);
@@ -3683,7 +3724,7 @@ public class ApisApiServiceImpl implements ApisApiService {
                 ThrottlingPolicyDTO.PolicyLevelEnum.SUBSCRIPTION.toString(), true, isAiApi);
 
         if (apiInfo != null) {
-            List<String> apiPolicies = apiInfo.getPolicies();
+            List<String> apiPolicies = RestApiPublisherUtils.getSubscriptionPoliciesForOrganization(apiInfo, organizationID);
             List<Tier> apiThrottlingPolicies = ApisApiServiceImplUtils.filterAPIThrottlingPolicies(apiPolicies,
                     availableThrottlingPolicyList);
             return Response.ok().entity(apiThrottlingPolicies).build();
@@ -4568,7 +4609,7 @@ public class ApisApiServiceImpl implements ApisApiService {
     public Response updateAPIDeployment(String apiId, String deploymentId, APIRevisionDeploymentDTO
             apIRevisionDeploymentDTO, MessageContext messageContext) throws APIManagementException {
         APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
-
+        String organization = RestApiUtil.getValidatedOrganization(messageContext);
         //validate if api exists
         APIInfo apiInfo = CommonUtils.validateAPIExistence(apiId);
         //validate API update operation permitted based on the LC state
@@ -4578,6 +4619,7 @@ public class ApisApiServiceImpl implements ApisApiService {
         String vhost = apIRevisionDeploymentDTO.getVhost();
         Boolean displayOnDevportal = apIRevisionDeploymentDTO.isDisplayOnDevportal();
         String decodedDeploymentName = ApisApiServiceImplUtils.getDecodedDeploymentName(deploymentId);
+        Map<String, Environment> environments = APIUtil.getEnvironments(organization);
         APIRevisionDeployment apiRevisionDeployment = ApisApiServiceImplUtils.mapApiRevisionDeployment(revisionId, vhost,
                 displayOnDevportal, decodedDeploymentName);
         apiProvider.updateAPIDisplayOnDevportal(apiId, revisionId, apiRevisionDeployment);
@@ -4628,6 +4670,29 @@ public class ApisApiServiceImpl implements ApisApiService {
         String jsonContent = new Gson().toJson(properties);
 
         return Response.ok().entity(jsonContent).build();
+    }
+
+    public Response getLabelsOfAPI(String apiId, MessageContext messageContext) throws APIManagementException {
+        APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
+        List<Label> labelList = apiProvider.getAllLabelsOfApi(apiId);
+        LabelListDTO labelListDTO = LabelMappingUtil.fromLabelListToLabelListDTO(labelList);
+        return Response.ok().entity(labelListDTO).build();
+    }
+
+    public Response attachLabelsToAPI(String apiId, RequestLabelListDTO requestLabelListDTO, MessageContext messageContext) throws APIManagementException {
+        APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
+        String tenantDomain = RestApiUtil.getValidatedOrganization(messageContext);
+        List<Label> updatedLabelList = apiProvider.attachApiLabels(apiId, requestLabelListDTO.getLabels(), tenantDomain);
+        LabelListDTO updatedLabelListDTO = LabelMappingUtil.fromLabelListToLabelListDTO(updatedLabelList);
+        return Response.ok().entity(updatedLabelListDTO).build();
+    }
+
+    public Response detachLabelsFromAPI(String apiId, RequestLabelListDTO requestLabelListDTO, MessageContext messageContext) throws APIManagementException {
+        APIProvider apiProvider = RestApiCommonUtil.getLoggedInUserProvider();
+        String tenantDomain = RestApiUtil.getValidatedOrganization(messageContext);
+        List<Label> updatedLabelList = apiProvider.detachApiLabels(apiId, requestLabelListDTO.getLabels(), tenantDomain);
+        LabelListDTO updatedLabelListDTO = LabelMappingUtil.fromLabelListToLabelListDTO(updatedLabelList);
+        return Response.ok().entity(updatedLabelListDTO).build();
     }
 
     private void validateEnvironment(String organization, String envId) throws APIManagementException {

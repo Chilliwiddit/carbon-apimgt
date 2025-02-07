@@ -24,7 +24,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.xerces.impl.Constants;
@@ -39,11 +39,14 @@ import org.wso2.carbon.apimgt.api.APIAdmin;
 import org.wso2.carbon.apimgt.api.APIManagementException;
 import org.wso2.carbon.apimgt.api.APIMgtResourceNotFoundException;
 import org.wso2.carbon.apimgt.api.ExceptionCodes;
+import org.wso2.carbon.apimgt.api.dto.GatewayVisibilityPermissionConfigurationDTO;
 import org.wso2.carbon.apimgt.api.dto.KeyManagerConfigurationDTO;
 import org.wso2.carbon.apimgt.api.model.API;
 import org.wso2.carbon.apimgt.api.dto.KeyManagerPermissionConfigurationDTO;
+import org.wso2.carbon.apimgt.api.dto.OrganizationDetailsDTO;
 import org.wso2.carbon.apimgt.api.model.APICategory;
 import org.wso2.carbon.apimgt.api.model.APIIdentifier;
+import org.wso2.carbon.apimgt.api.model.ApiResult;
 import org.wso2.carbon.apimgt.api.model.Application;
 import org.wso2.carbon.apimgt.api.model.ApplicationInfo;
 import org.wso2.carbon.apimgt.api.model.ApplicationInfoKeyManager;
@@ -53,6 +56,7 @@ import org.wso2.carbon.apimgt.api.model.KeyManagerApplicationUsages;
 import org.wso2.carbon.apimgt.api.model.KeyManagerConfiguration;
 import org.wso2.carbon.apimgt.api.model.KeyManagerConnectorConfiguration;
 import org.wso2.carbon.apimgt.api.model.LLMProvider;
+import org.wso2.carbon.apimgt.api.model.Label;
 import org.wso2.carbon.apimgt.api.model.Monetization;
 import org.wso2.carbon.apimgt.api.model.MonetizationUsagePublishInfo;
 import org.wso2.carbon.apimgt.api.model.VHost;
@@ -63,6 +67,7 @@ import org.wso2.carbon.apimgt.api.model.policy.Policy;
 import org.wso2.carbon.apimgt.api.model.policy.PolicyConstants;
 import org.wso2.carbon.apimgt.impl.alertmgt.AlertMgtConstants;
 import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
+import org.wso2.carbon.apimgt.impl.dao.LabelsDAO;
 import org.wso2.carbon.apimgt.impl.dao.constants.SQLConstants;
 import org.wso2.carbon.apimgt.impl.dto.ThrottleProperties;
 import org.wso2.carbon.apimgt.impl.dto.WorkflowProperties;
@@ -111,6 +116,8 @@ import java.util.SortedSet;
 import java.util.TimeZone;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.xml.XMLConstants;
@@ -133,9 +140,11 @@ public class APIAdminImpl implements APIAdmin {
 
     private static final Log log = LogFactory.getLog(APIAdminImpl.class);
     protected ApiMgtDAO apiMgtDAO;
+    protected LabelsDAO labelsDAO;
 
     public APIAdminImpl() {
         apiMgtDAO = ApiMgtDAO.getInstance();
+        labelsDAO = LabelsDAO.getInstance();
     }
 
     @Override
@@ -925,6 +934,18 @@ public class APIAdminImpl implements APIAdmin {
         return keyManagerPermissionConfigurationDTO;
     }
 
+    @Override
+    public GatewayVisibilityPermissionConfigurationDTO getGatewayVisibilityPermissions(String id) throws APIManagementException {
+
+        GatewayVisibilityPermissionConfigurationDTO gatewayVisibilityPermissionConfigurationDTO;
+        try {
+            gatewayVisibilityPermissionConfigurationDTO = apiMgtDAO.getGatewayVisibilityPermissions(id);
+        } catch (APIManagementException e) {
+            throw new APIManagementException("Gateway Visibility Permissions retrieval failed for gateway environment id " + id, e);
+        }
+        return gatewayVisibilityPermissionConfigurationDTO;
+    }
+
     private IdentityProvider updatedIDP(IdentityProvider retrievedIDP,
                                         KeyManagerConfigurationDTO keyManagerConfigurationDTO) {
 
@@ -1218,6 +1239,126 @@ public class APIAdminImpl implements APIAdmin {
         String tenantDomain = MultitenantUtils.getTenantDomain(username);
         Map<String, Object> result = apiProvider.searchPaginatedAPIs(searchQuery, tenantDomain, 0, Integer.MAX_VALUE);
         return (int) (Integer) result.get("length");
+    }
+
+    /**
+     * Adds a new label for the tenant
+     *
+     * @param label      label to add
+     * @param tenantDomain tenant domain
+     * @throws APIManagementException if failed add label
+     */
+    public Label addLabel(Label label, String tenantDomain) throws APIManagementException {
+
+        if (!StringUtils.isEmpty(label.getName())) {
+            if (label.getName().length() > 255) {
+                throw new APIManagementException("Label name is too long.",
+                        ExceptionCodes.from(ExceptionCodes.LABEL_ADDING_FAILED, "Label name is too long."));
+            }
+        } else {
+            throw new APIManagementException("Label name is empty.",
+                    ExceptionCodes.from(ExceptionCodes.LABEL_ADDING_FAILED, "Label name is empty."));
+        }
+
+        if (labelsDAO.isLabelNameExists(label.getName(), tenantDomain)) {
+            throw new APIManagementException("Label with name '" + label.getName() + "' already exists",
+                    ExceptionCodes.from(ExceptionCodes.LABEL_NAME_ALREADY_EXISTS, label.getName()));
+        }
+
+        label.setLabelId(UUID.randomUUID().toString());
+        return labelsDAO.addLabel(label, tenantDomain);
+    }
+
+    /**
+     * Updates a label
+     *
+     * @param labelID       label ID to update
+     * @param updateLabelBody   label data to update
+     * @param tenantDomain tenant domain
+     * @throws APIManagementException if failed update label
+     */
+    public Label updateLabel(String labelID, Label updateLabelBody, String tenantDomain)
+            throws APIManagementException {
+        Label labelOriginal = labelsDAO.getLabelByIdAndTenantDomain(labelID, tenantDomain);
+        if (labelOriginal == null) {
+            throw new APIManagementException("Label not found for the given label ID: " + labelID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_NOT_FOUND, labelID));
+        }
+        //Override labelID as it is not allowed to be updated
+        updateLabelBody.setLabelId(labelOriginal.getLabelId());
+
+        //We allow to update Label name given that the new label name is not taken yet
+        String oldName = labelOriginal.getName();
+        String updatedName = updateLabelBody.getName();
+        if (!StringUtils.isEmpty(updatedName)) {
+            if (updatedName.length() > 255) {
+                throw new APIManagementException("Label name is too long.",
+                        ExceptionCodes.from(ExceptionCodes.LABEL_UPDATE_FAILED, "Label name is too long."));
+            }
+        } else {
+            throw new APIManagementException("Label name is empty.",
+                    ExceptionCodes.from(ExceptionCodes.LABEL_UPDATE_FAILED, "Label name is empty."));
+        }
+
+        if (!oldName.equals(updatedName) && labelsDAO.isLabelNameExists(updatedName,
+                labelID, tenantDomain)) {
+            throw new APIManagementException("Label with name '" + updatedName + "' already exists",
+                    ExceptionCodes.from(ExceptionCodes.LABEL_NAME_ALREADY_EXISTS, updatedName));
+        }
+
+        labelsDAO.updateLabel(updateLabelBody);
+        return labelsDAO.getLabelByIdAndTenantDomain(labelID, tenantDomain);
+    }
+
+    /**
+     * Delete a label
+     *
+     * @param labelID       label ID to delete
+     * @param tenantDomain tenant domain
+     * @throws APIManagementException if failed delete label
+     */
+    public void deleteLabel(String labelID, String tenantDomain) throws APIManagementException {
+
+        Label labelOriginal = labelsDAO.getLabelByIdAndTenantDomain(labelID, tenantDomain);
+        if (labelOriginal == null) {
+            throw new APIManagementException("Label not found for the given label ID: " + labelID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_NOT_FOUND, labelID));
+        }
+        if (labelsDAO.hasAPIsForLabel(labelID)) {
+            throw new APIManagementException("Label is attached to APIs and cannot be deleted. Label ID: " + labelID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_CANNOT_DELETE_ASSOCIATED));
+        }
+        labelsDAO.deleteLabel(labelID);
+    }
+
+    /**
+     * Returns all labels of the tenant
+     *
+     * @param tenantDomain  tenant domain
+     * @return List<Label> list of Label objects
+     * @throws APIManagementException if failed to get labels
+     */
+    public List<Label> getAllLabelsOfTenant(String tenantDomain) throws APIManagementException {
+
+        return labelsDAO.getAllLabels(tenantDomain);
+    }
+
+    /**
+     * Get mapped APIs for the given label
+     *
+     * @param labelID label UUID
+     * @param tenantDomain  tenant domain
+     * @return List<ApiResult> list of ApiResult objects
+     * @throws APIManagementException
+     */
+    public List<ApiResult> getMappedApisForLabel(String labelID, String tenantDomain) throws APIManagementException {
+
+        Label labelOriginal = labelsDAO.getLabelByIdAndTenantDomain(labelID, tenantDomain);
+        if (labelOriginal == null) {
+            throw new APIManagementException("Label not found for the given label ID: " + labelID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_NOT_FOUND, labelID));
+        }
+        return labelsDAO.getMappedApisForLabel(labelID);
     }
 
     private void validateKeyManagerConfiguration(KeyManagerConfigurationDTO keyManagerConfigurationDTO)
@@ -1825,5 +1966,51 @@ public class APIAdminImpl implements APIAdmin {
         }
         setKeyManagerUsageRelatedInformation(keyManagerConfigurations, organization);
         return keyManagerConfigurations;
+    }
+
+    @Override
+    public List<OrganizationDetailsDTO> getOrganizations(String parentOrgId, String tenantDomain) throws APIManagementException {
+        List<OrganizationDetailsDTO> organizationsList = apiMgtDAO.getChildOrganizations(parentOrgId, tenantDomain);
+        return organizationsList;
+    }
+
+    @Override
+    public OrganizationDetailsDTO addOrganization(OrganizationDetailsDTO orgDto, String parentOrgId,
+            String tenantDomain) throws APIManagementException {
+       
+        //If there is an organization entry already available for external reference, update it
+        OrganizationDetailsDTO savedOrgInfo = apiMgtDAO.getOrganizationDetalsByExternalOrgId(
+                orgDto.getExternalOrganizationReference(), tenantDomain);
+        if (savedOrgInfo != null) {
+            orgDto.setOrganizationHandle(APIUtil.getOrganizationHandle(orgDto.getName()));
+            orgDto.setOrganizationId(savedOrgInfo.getOrganizationId());
+            apiMgtDAO.updateOrganizationDetails(orgDto);
+        } else {
+            orgDto.setOrganizationHandle(APIUtil.getOrganizationHandle(orgDto.getName()));
+            savedOrgInfo = apiMgtDAO.addOrganization(orgDto, parentOrgId, tenantDomain);
+            orgDto.setOrganizationId(savedOrgInfo.getOrganizationId());
+        }
+
+        return orgDto;
+    }
+
+    @Override
+    public OrganizationDetailsDTO getOrganizationDetails(String organizationId, String tenantDomain)
+            throws APIManagementException {
+        return apiMgtDAO.getOrganizationDetails(organizationId, tenantDomain);
+    }
+
+    @Override
+    public OrganizationDetailsDTO updateOrganization(OrganizationDetailsDTO organizationInfoDTO, String parentOrgId,
+            String tenantDomain) throws APIManagementException {
+        organizationInfoDTO.setOrganizationHandle(APIUtil.getOrganizationHandle(organizationInfoDTO.getName()));
+        apiMgtDAO.updateOrganizationDetails(organizationInfoDTO);
+        return apiMgtDAO.getOrganizationDetails(organizationInfoDTO.getOrganizationId(),
+                tenantDomain);
+    }
+
+    @Override
+    public void deleteOrganization(String organizationId, String tenantDomain) throws APIManagementException {
+        apiMgtDAO.deleteOrganizationDetails(organizationId, tenantDomain);
     }
 }

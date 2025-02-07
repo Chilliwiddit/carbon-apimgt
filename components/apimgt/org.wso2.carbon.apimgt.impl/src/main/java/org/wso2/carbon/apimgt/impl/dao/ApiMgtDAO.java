@@ -37,8 +37,10 @@ import org.wso2.carbon.apimgt.api.dto.ClientCertificateDTO;
 import org.wso2.carbon.apimgt.api.dto.ClonePolicyMetadataDTO;
 import org.wso2.carbon.apimgt.api.dto.ConditionDTO;
 import org.wso2.carbon.apimgt.api.dto.ConditionGroupDTO;
+import org.wso2.carbon.apimgt.api.dto.GatewayVisibilityPermissionConfigurationDTO;
 import org.wso2.carbon.apimgt.api.dto.KeyManagerConfigurationDTO;
 import org.wso2.carbon.apimgt.api.dto.KeyManagerPermissionConfigurationDTO;
+import org.wso2.carbon.apimgt.api.dto.OrganizationDetailsDTO;
 import org.wso2.carbon.apimgt.api.dto.UserApplicationAPIUsage;
 import org.wso2.carbon.apimgt.api.model.API;
 import org.wso2.carbon.apimgt.api.model.APICategory;
@@ -181,7 +183,7 @@ public class ApiMgtDAO {
     private final Object scopeMutex = new Object();
     private boolean forceCaseInsensitiveComparisons = false;
     private boolean multiGroupAppSharingEnabled = false;
-    private String KeyManagerAccessPublic = "PUBLIC";
+    private String PublicAccessPermission = "PUBLIC";
     private static final String[] keyTypes =
             new String[]{APIConstants.API_KEY_TYPE_PRODUCTION, APIConstants.API_KEY_TYPE_SANDBOX};
     String migrationEnabled = System.getProperty(APIConstants.MIGRATE);
@@ -3499,6 +3501,7 @@ public class ApiMgtDAO {
             ps.setString(11, application.getUUID());
             ps.setString(12, String.valueOf(application.getTokenType()));
             ps.setString(13, organization);
+            ps.setString(14, application.getSharedOrganization());
             ps.executeUpdate();
 
             rs = ps.getGeneratedKeys();
@@ -3539,7 +3542,8 @@ public class ApiMgtDAO {
             ps.setString(5, null);
             ps.setTimestamp(6, new Timestamp(System.currentTimeMillis()));
             ps.setString(7, application.getTokenType());
-            ps.setInt(8, application.getId());
+            ps.setString(8, application.getSharedOrganization());
+            ps.setInt(9, application.getId());
 
             ps.executeUpdate();
 
@@ -4120,7 +4124,8 @@ public class ApiMgtDAO {
      * @throws APIManagementException
      */
     public Application[] getApplicationsWithPagination(Subscriber subscriber, String groupingId, int start,
-                                                       int offset, String search, String sortColumn, String sortOrder, String organization)
+            int offset, String search, String sortColumn, String sortOrder, String organization,
+            String sharedOrganization)
             throws APIManagementException {
 
         Connection connection = null;
@@ -4128,7 +4133,7 @@ public class ApiMgtDAO {
         ResultSet rs = null;
         Application[] applications = null;
         String sqlQuery = null;
-
+        boolean isOrgSharingEnabled = true; //TODO need to come from config or from user info
         if (groupingId != null && !"null".equals(groupingId) && !groupingId.isEmpty()) {
             if (multiGroupAppSharingEnabled) {
                 if (forceCaseInsensitiveComparisons) {
@@ -4149,9 +4154,19 @@ public class ApiMgtDAO {
             }
         } else {
             if (forceCaseInsensitiveComparisons) {
-                sqlQuery = SQLConstantManagerFactory.getSQlString("GET_APPLICATIONS_PREFIX_NONE_CASESENSITVE");
+                if (isOrgSharingEnabled) {
+                    sqlQuery = SQLConstantManagerFactory
+                            .getSQlString("GET_APPLICATIONS_PREFIX_NONE_CASESENSITVE_WITH_ORGSHARING");
+                } else {
+                    sqlQuery = SQLConstantManagerFactory.getSQlString("GET_APPLICATIONS_PREFIX_NONE_CASESENSITVE");
+                }
             } else {
-                sqlQuery = SQLConstantManagerFactory.getSQlString("GET_APPLICATIONS_PREFIX_CASESENSITVE");
+                if (isOrgSharingEnabled) {
+                    sqlQuery = SQLConstantManagerFactory
+                            .getSQlString("GET_APPLICATIONS_PREFIX_CASESENSITVE_WITH_ORGSHARING");
+                } else {
+                    sqlQuery = SQLConstantManagerFactory.getSQlString("GET_APPLICATIONS_PREFIX_CASESENSITVE");
+                }
             }
         }
 
@@ -4198,12 +4213,22 @@ public class ApiMgtDAO {
                     prepStmt.setInt(6, offset);
                 }
             } else {
-                prepStmt = connection.prepareStatement(sqlQuery);
-                prepStmt.setString(1, subscriber.getName());
-                prepStmt.setString(2, organization);
-                prepStmt.setString(3, "%" + search + "%");
-                prepStmt.setInt(4, start);
-                prepStmt.setInt(5, offset);
+                if (isOrgSharingEnabled) {
+                    prepStmt = connection.prepareStatement(sqlQuery);
+                    prepStmt.setString(1, subscriber.getName());
+                    prepStmt.setString(2, sharedOrganization);
+                    prepStmt.setString(3, organization);
+                    prepStmt.setString(4, "%" + search + "%");
+                    prepStmt.setInt(5, start);
+                    prepStmt.setInt(6, offset);
+                } else {
+                    prepStmt = connection.prepareStatement(sqlQuery);
+                    prepStmt.setString(1, subscriber.getName());
+                    prepStmt.setString(2, organization);
+                    prepStmt.setString(3, "%" + search + "%");
+                    prepStmt.setInt(4, start);
+                    prepStmt.setInt(5, offset);
+                }
             }
             if (log.isDebugEnabled()) {
                 log.debug("Query: " + sqlQuery);
@@ -4240,6 +4265,7 @@ public class ApiMgtDAO {
                 // Get custom attributes of application
                 Map<String, String> applicationAttributes = getApplicationAttributes(connection, applicationId);
                 application.setApplicationAttributes(applicationAttributes);
+                application.setSharedOrganization(rs.getString("SHARED_ORGANIZATION"));
 
                 applicationsList.add(application);
             }
@@ -6692,6 +6718,7 @@ public class ApiMgtDAO {
                 application.setTokenType(rs.getString("TOKEN_TYPE"));
                 application.setOwner(rs.getString("CREATED_BY"));
                 application.setOrganization(rs.getString("ORGANIZATION"));
+                application.setSharedOrganization(rs.getString("SHARED_ORGANIZATION"));
                 subscriber.setId(rs.getInt("SUBSCRIBER_ID"));
                 application.setLastUpdatedTime(String.valueOf(rs.getTimestamp("UPDATED_TIME").getTime()));
                 application.setCreatedTime(String.valueOf(rs.getTimestamp("CREATED_TIME").getTime()));
@@ -9474,6 +9501,7 @@ public class ApiMgtDAO {
                         log.error("Error while converting configurations in " + uuid, e);
                     }
                     keyManagerConfigurationDTO.setPermissions(getKeyManagerPermissions(keyManagerConfigurationDTO.getUuid()));
+                    keyManagerConfigurationDTO.setAllowedOrganizations(getKeymanagerVisibleOrgs(uuid));
                     keyManagerConfigurationDTOS.add(keyManagerConfigurationDTO);
                 }
             }
@@ -9513,6 +9541,7 @@ public class ApiMgtDAO {
                         keyManagerConfigurationDTO.setAdditionalProperties(map);
                     }
                     keyManagerConfigurationDTO.setPermissions(getKeyManagerPermissions(keyManagerConfigurationDTO.getUuid()));
+                    keyManagerConfigurationDTO.setAllowedOrganizations(getKeymanagerVisibleOrgs(uuid));
                     return keyManagerConfigurationDTO;
                 }
             }
@@ -9584,6 +9613,7 @@ public class ApiMgtDAO {
                         keyManagerConfigurationDTO.setAdditionalProperties(map);
                     }
                     keyManagerConfigurationDTO.setPermissions(getKeyManagerPermissions(uuid));
+                    keyManagerConfigurationDTO.setAllowedOrganizations(getKeymanagerVisibleOrgs(uuid));
                     return keyManagerConfigurationDTO;
                 }
             }
@@ -9626,6 +9656,7 @@ public class ApiMgtDAO {
                         keyManagerConfigurationDTO.setAdditionalProperties(map);
                     }
                     keyManagerConfigurationDTO.setPermissions(getKeyManagerPermissions(uuid));
+                    keyManagerConfigurationDTO.setAllowedOrganizations(getKeymanagerVisibleOrgs(uuid));
                     return keyManagerConfigurationDTO;
                 }
             }
@@ -9653,7 +9684,7 @@ public class ApiMgtDAO {
                 preparedStatement.setString(10, keyManagerConfigurationDTO.getExternalReferenceId());
                 preparedStatement.executeUpdate();
                 KeyManagerPermissionConfigurationDTO permissionDTO = keyManagerConfigurationDTO.getPermissions();
-                if (permissionDTO != null && !KeyManagerAccessPublic.equals(permissionDTO.getPermissionType())) {
+                if (permissionDTO != null && !PublicAccessPermission.equals(permissionDTO.getPermissionType())) {
                     try (PreparedStatement addPermissionStatement = conn
                             .prepareStatement(SQLConstants.KeyManagerPermissionsSqlConstants
                                     .ADD_KEY_MANAGER_PERMISSION_SQL)) {
@@ -9664,6 +9695,18 @@ public class ApiMgtDAO {
                             addPermissionStatement.addBatch();
                         }
                         addPermissionStatement.executeBatch();
+                    }
+                }
+                List<String> allowedOrgs = keyManagerConfigurationDTO.getAllowedOrganizations();
+                if (allowedOrgs != null && !allowedOrgs.isEmpty()) {
+                    try (PreparedStatement addVisibleOrgsStatement = conn.prepareStatement(
+                            SQLConstants.KeyManagerOrgVisibilitySqlConstants.ADD_KEY_MANAGER_ORG_VISIBILITY_SQL)) {
+                        for (String org : allowedOrgs) {
+                            addVisibleOrgsStatement.setString(1, keyManagerConfigurationDTO.getUuid());
+                            addVisibleOrgsStatement.setString(2, org);
+                            addVisibleOrgsStatement.addBatch();
+                        }
+                        addVisibleOrgsStatement.executeBatch();
                     }
                 }
                 conn.commit();
@@ -9734,7 +9777,7 @@ public class ApiMgtDAO {
                     deletePermissionsStatement.executeUpdate();
                 }
                 KeyManagerPermissionConfigurationDTO permissionDTO = keyManagerConfigurationDTO.getPermissions();
-                if (permissionDTO != null && !KeyManagerAccessPublic.equals(permissionDTO.getPermissionType())) {
+                if (permissionDTO != null && !PublicAccessPermission.equals(permissionDTO.getPermissionType())) {
                     try (PreparedStatement addPermissionStatement = conn.prepareStatement(SQLConstants
                             .KeyManagerPermissionsSqlConstants.ADD_KEY_MANAGER_PERMISSION_SQL)) {
                         for (String role : permissionDTO.getRoles()) {
@@ -9744,6 +9787,23 @@ public class ApiMgtDAO {
                             addPermissionStatement.addBatch();
                         }
                         addPermissionStatement.executeBatch();
+                    }
+                }
+                try (PreparedStatement deleteOrgStatement = conn.prepareStatement(SQLConstants
+                        .KeyManagerOrgVisibilitySqlConstants.DELETE_ALL_KEY_MANAGER_ORG_VISIBILITY_SQL)) {
+                    deleteOrgStatement.setString(1, keyManagerConfigurationDTO.getUuid());
+                    deleteOrgStatement.executeUpdate();
+                }
+                List<String> allowedOrgs = keyManagerConfigurationDTO.getAllowedOrganizations();
+                if (allowedOrgs != null && !allowedOrgs.isEmpty()) {
+                    try (PreparedStatement addVisibleOrgsStatement = conn.prepareStatement(
+                            SQLConstants.KeyManagerOrgVisibilitySqlConstants.ADD_KEY_MANAGER_ORG_VISIBILITY_SQL)) {
+                        for (String org : allowedOrgs) {
+                            addVisibleOrgsStatement.setString(1, keyManagerConfigurationDTO.getUuid());
+                            addVisibleOrgsStatement.setString(2, org);
+                            addVisibleOrgsStatement.addBatch();
+                        }
+                        addVisibleOrgsStatement.executeBatch();
                     }
                 }
                 conn.commit();
@@ -9801,7 +9861,7 @@ public class ApiMgtDAO {
                 ps.setString(1, keyManagerUUID);
                 ResultSet resultSet = ps.executeQuery();
                 ArrayList<String> roles = new ArrayList<>();
-                keyManagerPermissions.setPermissionType(KeyManagerAccessPublic);
+                keyManagerPermissions.setPermissionType(PublicAccessPermission);
                 while (resultSet.next()) {
                     roles.add(resultSet.getString("ROLE"));
                     keyManagerPermissions.setPermissionType(resultSet.getString("PERMISSIONS_TYPE"));
@@ -9818,6 +9878,63 @@ public class ApiMgtDAO {
         }
         return keyManagerPermissions;
     }
+
+    public List<String> getKeymanagerVisibleOrgs(String keyManagerUUID) throws APIManagementException {
+        List<String> orgList = new ArrayList<String>();
+        try (Connection conn = APIMgtDBUtil.getConnection()) {
+            try {
+                String getKeyManagerPermissionQuery = SQLConstants.KeyManagerOrgVisibilitySqlConstants.GET_KEY_MANAGER_ORG_VISIBILITY_SQL;
+                PreparedStatement ps = conn.prepareStatement(getKeyManagerPermissionQuery);
+                ps.setString(1, keyManagerUUID);
+                ResultSet resultSet = ps.executeQuery();
+                while (resultSet.next()) {
+                    orgList.add(resultSet.getString("ALLOWED_ORGANIZATIONS"));
+                }
+            } catch (SQLException e) {
+                conn.rollback();
+                handleException("Failed to get Key Manager organizations information for Key Manager " + keyManagerUUID,
+                        e);
+            }
+        } catch (SQLException e) {
+            throw new APIManagementException(
+                    "Error while retrieving key manager organizations with id " + keyManagerUUID, e);
+        }
+        return orgList;
+    }
+    
+    public GatewayVisibilityPermissionConfigurationDTO getGatewayVisibilityPermissions(String gatewayUUID)
+            throws APIManagementException {
+
+        GatewayVisibilityPermissionConfigurationDTO gatewayVisibilityPermissions =
+                new GatewayVisibilityPermissionConfigurationDTO();
+        try (Connection conn = APIMgtDBUtil.getConnection()) {
+            gatewayVisibilityPermissions = new GatewayVisibilityPermissionConfigurationDTO();
+            try {
+                String getGatewayVisibilityPermissionQuery = SQLConstants.GET_GATEWAY_VISIBILITY_PERMISSIONS_SQL;
+                conn.setAutoCommit(false);
+                PreparedStatement ps = conn.prepareStatement(getGatewayVisibilityPermissionQuery);
+                ps.setString(1, gatewayUUID);
+                ResultSet resultSet = ps.executeQuery();
+                ArrayList<String> roles = new ArrayList<>();
+                // Setting the PERMISSION_TYPE to PUBLIC in case the resultSet is empty
+                gatewayVisibilityPermissions.setPermissionType(PublicAccessPermission);
+                while (resultSet.next()) {
+                    roles.add(resultSet.getString("ROLE"));
+                    gatewayVisibilityPermissions.setPermissionType(resultSet.getString("PERMISSIONS_TYPE"));
+                }
+                gatewayVisibilityPermissions.setRoles(roles);
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                handleException("Failed to get gateway visibility permission information for gateway environment " + gatewayUUID, e);
+            }
+        } catch (SQLException e) {
+            throw new APIManagementException(
+                    "Error while retrieving gateway visibility permissions with id " + gatewayUUID, e);
+        }
+        return gatewayVisibilityPermissions;
+    }
+
     public List<KeyManagerConfigurationDTO> getKeyManagerConfigurations() throws APIManagementException {
 
         List<KeyManagerConfigurationDTO> keyManagerConfigurationDTOS = new ArrayList<>();
@@ -9845,6 +9962,7 @@ public class ApiMgtDAO {
                         log.error("Error while converting configurations in " + uuid, e);
                     }
                     keyManagerConfigurationDTO.setPermissions(getKeyManagerPermissions(uuid));
+                    keyManagerConfigurationDTO.setAllowedOrganizations(getKeymanagerVisibleOrgs(uuid));
                     keyManagerConfigurationDTOS.add(keyManagerConfigurationDTO);
                 }
             }
@@ -10211,6 +10329,139 @@ public class ApiMgtDAO {
         }
     }
 
+    
+    public OrganizationDetailsDTO addOrganization(OrganizationDetailsDTO organizationDTO, String parentOrgId,
+            String tenantDomain) throws APIManagementException {
+        try (Connection conn = APIMgtDBUtil.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement preparedStatement = conn
+                    .prepareStatement(SQLConstants.OrganizationSqlConstants.ADD_ORGANIZATION)) {
+                organizationDTO.setOrganizationId(UUID.randomUUID().toString());
+                preparedStatement.setString(1, organizationDTO.getOrganizationId());
+                preparedStatement.setString(2, organizationDTO.getExternalOrganizationReference());
+                preparedStatement.setString(3, organizationDTO.getName());
+                preparedStatement.setString(4, parentOrgId);
+                preparedStatement.setString(5, organizationDTO.getDescription());
+                preparedStatement.setString(6, tenantDomain);
+                preparedStatement.setString(7, organizationDTO.getOrganizationHandle());
+                preparedStatement.executeUpdate();
+                conn.commit();
+            }
+        } catch (SQLException e) {
+            String message = "Error while saving organization " + organizationDTO.getName()
+                    + " in tenant " + tenantDomain;
+            handleException(message, e);
+        }
+        return organizationDTO;
+    }
+    
+    public List<OrganizationDetailsDTO> getChildOrganizations(String parentOrganizationId, String rootOrg)
+            throws APIManagementException {
+
+        List<OrganizationDetailsDTO> organizationList = new ArrayList<OrganizationDetailsDTO>();
+        try (Connection connection = APIMgtDBUtil.getConnection();
+                PreparedStatement prepStmt = connection
+                        .prepareStatement(SQLConstants.OrganizationSqlConstants.GET_ORGANIZATIONS_BY_PARENT_ORG_ID)) {
+            prepStmt.setString(1, parentOrganizationId);
+            prepStmt.setString(2, rootOrg);
+            try (ResultSet resultSet = prepStmt.executeQuery()) {
+                while (resultSet.next()) {
+                    OrganizationDetailsDTO organization = new OrganizationDetailsDTO();
+                    organization.setOrganizationId(resultSet.getString("ORG_UUID"));
+                    organization.setExternalOrganizationReference(resultSet.getString("EXT_ORG_ID"));
+                    organization.setName(resultSet.getString("DISPLAY_NAME"));
+                    organization.setDescription(resultSet.getString("DESCRIPTION"));
+                    organizationList.add(organization);
+                }
+            }
+        } catch (SQLException e) {
+            handleException("Failed to get organizations : ", e);
+        }
+        return organizationList;
+    }
+    
+    public OrganizationDetailsDTO getOrganizationDetails(String organizationId, String rootOrg)
+            throws APIManagementException {
+
+        OrganizationDetailsDTO organization = null;
+        try (Connection connection = APIMgtDBUtil.getConnection();
+                PreparedStatement prepStmt = connection
+                        .prepareStatement(SQLConstants.OrganizationSqlConstants.GET_ORGANIZATION_BY_ORG_ID);) {
+            prepStmt.setString(1, organizationId);
+            prepStmt.setString(2, rootOrg);
+            try (ResultSet resultSet = prepStmt.executeQuery()) {
+                if (resultSet.next()) {
+                    organization = new OrganizationDetailsDTO();
+                    organization.setOrganizationId(resultSet.getString("ORG_UUID"));
+                    organization.setExternalOrganizationReference(resultSet.getString("EXT_ORG_ID"));
+                    organization.setName(resultSet.getString("DISPLAY_NAME"));
+                    organization.setDescription(resultSet.getString("DESCRIPTION"));
+                }
+            }
+        } catch (SQLException e) {
+            handleException("Failed to get organization for organization Id : " + organizationId, e);
+        }
+        return organization;
+    }
+    
+    public void deleteOrganizationDetails(String organizationId, String rootOrg)
+            throws APIManagementException {
+        try (Connection connection = APIMgtDBUtil.getConnection();
+                PreparedStatement prepStmt = connection
+                        .prepareStatement(SQLConstants.OrganizationSqlConstants.DELETE_ORGANIZATION);) {
+            connection.setAutoCommit(false);
+            prepStmt.setString(1, organizationId);
+            prepStmt.setString(2, rootOrg);
+            prepStmt.executeUpdate();
+            connection.commit();
+        } catch (SQLException e) {
+            handleException("Failed to delete organization Id : " + organizationId, e);
+        }
+    }
+    
+    public void updateOrganizationDetails(OrganizationDetailsDTO organizationDetailsDTO) throws APIManagementException {
+
+        try (Connection conn = APIMgtDBUtil.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement preparedStatement = conn
+                    .prepareStatement(SQLConstants.OrganizationSqlConstants.UPDATE_ORGANIZATION)) {
+                preparedStatement.setString(1, organizationDetailsDTO.getName());
+                preparedStatement.setString(2, organizationDetailsDTO.getDescription());
+                preparedStatement.setString(3, organizationDetailsDTO.getExternalOrganizationReference());
+                preparedStatement.setString(4, organizationDetailsDTO.getOrganizationHandle());
+                preparedStatement.setString(5, organizationDetailsDTO.getOrganizationId());
+                preparedStatement.executeUpdate();
+                conn.commit();
+            }
+        } catch (SQLException e) {
+            handleException("Failed to update organization Id : " + "Error while Updating organization details for "
+                    + organizationDetailsDTO.getOrganizationId(), e);
+        }
+    }
+    
+    public OrganizationDetailsDTO getOrganizationDetalsByExternalOrgId(String externalOrgId, String rootOrg)
+            throws APIManagementException {
+        OrganizationDetailsDTO organization = null;
+        try (Connection connection = APIMgtDBUtil.getConnection();
+                PreparedStatement prepStmt = connection
+                        .prepareStatement(SQLConstants.OrganizationSqlConstants.GET_ORGANIZATION_BY_EXTERNAL_ORG_ID);) {
+            prepStmt.setString(1, externalOrgId);
+            prepStmt.setString(2, rootOrg);
+            try (ResultSet resultSet = prepStmt.executeQuery()) {
+                if (resultSet.next()) {
+                    organization = new OrganizationDetailsDTO();
+                    organization.setOrganizationId(resultSet.getString("ORG_UUID"));
+                    organization.setExternalOrganizationReference(resultSet.getString("EXT_ORG_ID"));
+                    organization.setName(resultSet.getString("DISPLAY_NAME"));
+                    organization.setDescription(resultSet.getString("DESCRIPTION"));
+                }
+            }
+        } catch (SQLException e) {
+            handleException("Failed to get organization for organization Id : " + externalOrgId, e);
+        }
+        return organization;
+    }
+    
     public API getLightWeightAPIInfoByAPIIdentifier(APIIdentifier apiIdentifier, String organization)
             throws APIManagementException {
 
@@ -13653,7 +13904,9 @@ public class ApiMgtDAO {
         if (!StringUtils.isBlank(policy.getUUID())) {
             policyStatement.setString(11, policy.getUUID());
         } else {
-            policyStatement.setString(11, UUID.randomUUID().toString());
+            String uuid = UUID.randomUUID().toString();
+            policy.setUUID(uuid);
+            policyStatement.setString(11, uuid);
         }
 
     }
@@ -15042,6 +15295,7 @@ public class ApiMgtDAO {
                     env.setProvider(provider);
                     env.setGatewayType(gatewayType);
                     env.setVhosts(getVhostGatewayEnvironments(connection, id));
+                    env.setPermissions(getGatewayVisibilityPermissions(uuid));
                     envList.add(env);
                 }
             }
@@ -15082,6 +15336,7 @@ public class ApiMgtDAO {
                     env.setDescription(description);
                     env.setProvider(provider);
                     env.setVhosts(getVhostGatewayEnvironments(connection, id));
+                    env.setPermissions(getGatewayVisibilityPermissions(uuid));
                 }
             }
         } catch (SQLException e) {
@@ -15118,6 +15373,21 @@ public class ApiMgtDAO {
                 prepStmt.setString(8, tenantDomain);
                 prepStmt.executeUpdate();
 
+                GatewayVisibilityPermissionConfigurationDTO permissionDTO = environment.getPermissions();
+                if (permissionDTO != null && !PublicAccessPermission.equals(permissionDTO.getPermissionType()) &&
+                        environment.getPermissions().getRoles() != null) {
+                    try (PreparedStatement addPermissionStatement = conn
+                            .prepareStatement(SQLConstants.ADD_GATEWAY_VISIBILITY_PERMISSION_SQL)) {
+                        for (String role : environment.getPermissions().getRoles()) {
+                            addPermissionStatement.setString(1, environment.getUuid());
+                            addPermissionStatement.setString(2, permissionDTO.getPermissionType());
+                            addPermissionStatement.setString(3, role);
+                            addPermissionStatement.addBatch();
+                        }
+                        addPermissionStatement.executeBatch();
+                    }
+                }
+                conn.commit();
                 ResultSet rs = prepStmt.getGeneratedKeys();
                 int id = -1;
                 if (rs.next()) {
@@ -15246,9 +15516,14 @@ public class ApiMgtDAO {
 
         try (Connection connection = APIMgtDBUtil.getConnection()) {
             connection.setAutoCommit(false);
-            try (PreparedStatement prepStmt = connection.prepareStatement(SQLConstants.DELETE_ENVIRONMENT_SQL)) {
-                prepStmt.setString(1, uuid);
-                prepStmt.executeUpdate();
+            try (PreparedStatement deletePermissionsStatement = connection
+                    .prepareStatement(SQLConstants.DELETE_ALL_GATEWAY_VISIBILITY_PERMISSION_SQL)) {
+                deletePermissionsStatement.setString(1, uuid);
+                deletePermissionsStatement.executeUpdate();
+                try (PreparedStatement prepStmt = connection.prepareStatement(SQLConstants.DELETE_ENVIRONMENT_SQL)) {
+                    prepStmt.setString(1, uuid);
+                    prepStmt.executeUpdate();
+                }
                 connection.commit();
             } catch (SQLException e) {
                 connection.rollback();
@@ -15278,6 +15553,25 @@ public class ApiMgtDAO {
                 deleteGatewayVhosts(connection, environment.getId());
                 addGatewayVhosts(connection, environment.getId(), environment.getVhosts());
                 connection.commit();
+                try (PreparedStatement deletePermissionsStatement = connection.prepareStatement(
+                        SQLConstants.DELETE_ALL_GATEWAY_VISIBILITY_PERMISSION_SQL)) {
+                    deletePermissionsStatement.setString(1, environment.getUuid());
+                    deletePermissionsStatement.executeUpdate();
+                }
+                GatewayVisibilityPermissionConfigurationDTO permissionDTO = environment.getPermissions();
+                if (permissionDTO != null && permissionDTO.getPermissionType() != PublicAccessPermission &&
+                        environment.getPermissions().getRoles() != null) {
+                    try (PreparedStatement addPermissionStatement = connection.prepareStatement(
+                            SQLConstants.ADD_GATEWAY_VISIBILITY_PERMISSION_SQL)) {
+                        for (String role : permissionDTO.getRoles()) {
+                            addPermissionStatement.setString(1, environment.getUuid());
+                            addPermissionStatement.setString(2, permissionDTO.getPermissionType());
+                            addPermissionStatement.setString(3, role);
+                            addPermissionStatement.addBatch();
+                        }
+                        addPermissionStatement.executeBatch();
+                    }
+                }
             } catch (SQLException e) {
                 connection.rollback();
                 handleException("Failed to update Environment", e);
@@ -20828,6 +21122,50 @@ public class ApiMgtDAO {
         return policyData;
     }
 
+    /**
+     * Get the list of API specific operation policy IDs from AM_API_OPERATION_POLICY table where cloned policy ID is
+     * non null. This method is intended to get the common operation policy IDs which have been attached to the
+     * given API.
+     *
+     * @param apiUUID                UUID of the API
+     * @return operation policy
+     * @throws APIManagementException
+     */
+    public Map<String, String> getClonedIdsMappedApiSpecificOperationPolicies(String apiUUID)
+            throws APIManagementException {
+
+        try (Connection connection = APIMgtDBUtil.getConnection()) {
+            return getClonedIdsMappedApiSpecificOperationPolicies(connection, apiUUID);
+        } catch (SQLException e) {
+            handleException("Failed to get the API specific operation policy IDs from API "
+                    + apiUUID, e);
+        }
+        return null;
+    }
+
+    private Map<String, String> getClonedIdsMappedApiSpecificOperationPolicies(Connection connection, String apiUUID)
+            throws SQLException, APIManagementException {
+
+        String dbQuery;
+        boolean isAPIRevision = checkAPIUUIDIsARevisionUUID(apiUUID) != null;
+        if (isAPIRevision) {
+            dbQuery = SQLConstants.OperationPolicyConstants.
+                    GET_REVISION_SPECIFIC_OPERATION_POLICY_IDS_FROM_REVISION_UUID;
+        } else {
+            dbQuery = SQLConstants.OperationPolicyConstants.GET_API_SPECIFIC_OPERATION_POLICY_IDS_FROM_API_UUID;
+        }
+        Map<String, String> policyMap = new HashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(dbQuery)) {
+            statement.setString(1, apiUUID);
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    policyMap.put(rs.getString("POLICY_UUID"), rs.getString("CLONED_POLICY_UUID"));
+                }
+            }
+        }
+        return policyMap;
+    }
+
     private List<OperationPolicyDefinition> getPolicyDefinitionForPolicyId(Connection connection, String policyId)
             throws SQLException {
 
@@ -21197,7 +21535,13 @@ public class ApiMgtDAO {
                 while (rs.next()) {
                     String policyName = rs.getString("POLICY_NAME");
                     String policyVersion = rs.getString("POLICY_VERSION");
-                    policyNames.add(APIUtil.getOperationPolicyFileName(policyName, policyVersion));
+                    policyNames.add(APIUtil.getOperationPolicyFileName(policyName, policyVersion, null));
+                    /*since the only usage of this method is to load the common operation policies from the
+                     specifications and we are keeping only the common policies without appending the string "common"
+                     to the file name, it's not required to append the policyType string
+                     (policyNames.add(APIUtil.getOperationPolicyFileName(policyName, policyVersion,
+                     ImportExportConstants.POLICY_TYPE_COMMON));)here as well.
+                     */
                 }
             }
         } catch (SQLException e) {

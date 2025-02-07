@@ -53,6 +53,7 @@ import org.wso2.carbon.apimgt.api.dto.CertificateMetadataDTO;
 import org.wso2.carbon.apimgt.api.dto.ClientCertificateDTO;
 import org.wso2.carbon.apimgt.api.dto.ClonePolicyMetadataDTO;
 import org.wso2.carbon.apimgt.api.dto.EnvironmentPropertiesDTO;
+import org.wso2.carbon.apimgt.api.dto.OrganizationDetailsDTO;
 import org.wso2.carbon.apimgt.api.dto.UserApplicationAPIUsage;
 import org.wso2.carbon.apimgt.api.model.API;
 import org.wso2.carbon.apimgt.api.model.APIDefinitionContentSearchResult;
@@ -72,6 +73,7 @@ import org.wso2.carbon.apimgt.api.model.BlockConditionsDTO;
 import org.wso2.carbon.apimgt.api.model.Comment;
 import org.wso2.carbon.apimgt.api.model.CommentList;
 import org.wso2.carbon.apimgt.api.model.LLMProvider;
+import org.wso2.carbon.apimgt.api.model.Label;
 import org.wso2.carbon.apimgt.api.model.SequenceBackendData;
 import org.wso2.carbon.apimgt.api.model.DeployedAPIRevision;
 import org.wso2.carbon.apimgt.api.model.Documentation;
@@ -119,6 +121,7 @@ import org.wso2.carbon.apimgt.impl.certificatemgt.CertificateManagerImpl;
 import org.wso2.carbon.apimgt.impl.certificatemgt.ResponseCode;
 import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import org.wso2.carbon.apimgt.impl.dao.GatewayArtifactsMgtDAO;
+import org.wso2.carbon.apimgt.impl.dao.LabelsDAO;
 import org.wso2.carbon.apimgt.impl.dao.ServiceCatalogDAO;
 import org.wso2.carbon.apimgt.impl.definitions.OAS3Parser;
 import org.wso2.carbon.apimgt.impl.definitions.OASParserUtil;
@@ -135,6 +138,7 @@ import org.wso2.carbon.apimgt.impl.gatewayartifactsynchronizer.exception.Artifac
 import org.wso2.carbon.apimgt.impl.importexport.APIImportExportException;
 import org.wso2.carbon.apimgt.impl.importexport.ExportFormat;
 import org.wso2.carbon.apimgt.impl.importexport.ImportExportAPI;
+import org.wso2.carbon.apimgt.impl.importexport.ImportExportConstants;
 import org.wso2.carbon.apimgt.impl.internal.ServiceReferenceHolder;
 import org.wso2.carbon.apimgt.impl.lifecycle.CheckListItem;
 import org.wso2.carbon.apimgt.impl.lifecycle.LCManagerFactory;
@@ -2501,6 +2505,8 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
         // DB delete operations
         if (!isError && api != null) {
             try {
+                // Remove API-Label mappings
+                removeAPILabelMappings(apiUuid);
                 // Remove Custom Backend entries of the API
                 deleteCustomBackendByAPIID(apiUuid);
                 deleteAPIRevisions(apiUuid, organization);
@@ -4556,6 +4562,9 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
                 throw new APIManagementException(message);
             }
 
+            // Remove API Product-Label Mappings
+            removeAPILabelMappings(apiProduct.getUuid());
+
             // gatewayType check is required when API Management is deployed on
             // other servers to avoid synapse
             deleteAPIProductRevisions(apiProduct.getUuid(), apiProduct.getOrganization());
@@ -5299,6 +5308,84 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
         }
     }
 
+    /**
+     *
+     * @param policy
+     * @param apiOperationPolicyIdToClonedPolicyIdMap
+     * @return
+     * @throws APIManagementException
+     */
+    public String getPolicyType(OperationPolicy policy, Map<String, String> apiOperationPolicyIdToClonedPolicyIdMap)
+            throws APIManagementException {
+        if (policy.getPolicyId() == null) {
+            return ImportExportConstants.POLICY_TYPE_API;
+        } else {
+            // check if cloned policy id is null
+            if (apiOperationPolicyIdToClonedPolicyIdMap.get(policy.getPolicyId()) == null) {
+                return ImportExportConstants.POLICY_TYPE_API;
+            } else {
+                return ImportExportConstants.POLICY_TYPE_COMMON;
+            }
+        }
+    }
+
+    public String getProductPolicyType(OperationPolicy policy, String apiUUID,
+                                       Map<String, String> apiProductOperationPolicyIdToClonedPolicyIdMap)
+            throws APIManagementException {
+
+        String originatedPolicyId = apiProductOperationPolicyIdToClonedPolicyIdMap.get(policy.getPolicyId());
+        Map<String, String> apiOperationPolicyIdToClonedPolicyIdMap =
+                getClonedAPISpecificOperationPolicyIdsList(apiUUID);
+        policy.setPolicyId(originatedPolicyId);
+        return getPolicyType(policy, apiOperationPolicyIdToClonedPolicyIdMap);
+    }
+
+    public void populatePolicyTypeInAPI(API api) throws APIManagementException {
+
+        Map<String, String> apiOperationPolicyIdToClonedPolicyIdMap = getClonedAPISpecificOperationPolicyIdsList(api.getUuid());
+        Set<URITemplate> uriTemplates = api.getUriTemplates();
+        for (URITemplate uriTemplate : uriTemplates) {
+            List<OperationPolicy> operationPolicies = uriTemplate.getOperationPolicies();
+            if (!operationPolicies.isEmpty()) {
+                for (OperationPolicy operationPolicy : operationPolicies) {
+                    String policyType = getPolicyType(operationPolicy, apiOperationPolicyIdToClonedPolicyIdMap);
+                    operationPolicy.setPolicyType(policyType);
+                }
+            }
+        }
+        api.setUriTemplates(uriTemplates);
+
+        List<OperationPolicy> apiPolicies = api.getApiPolicies();
+        if (apiPolicies != null && !apiPolicies.isEmpty()) {
+            for (OperationPolicy policy : apiPolicies) {
+                String policyType = getPolicyType(policy, apiOperationPolicyIdToClonedPolicyIdMap);
+                policy.setPolicyType(policyType);
+            }
+        }
+        api.setApiPolicies(apiPolicies);
+    }
+
+    public void populatePolicyTypeInApiProduct(APIProduct product) throws APIManagementException {
+
+        Map<String, String> apiProductOperationPolicyIdToClonedPolicyIdMap =
+                getClonedAPISpecificOperationPolicyIdsList(product.getUuid());
+        List<APIProductResource> productResources = product.getProductResources();
+        for (APIProductResource resource : productResources) {
+            URITemplate uriTemplate = resource.getUriTemplate();
+            List<OperationPolicy> operationPolicies = uriTemplate.getOperationPolicies();
+            if (!operationPolicies.isEmpty()) {
+                for (OperationPolicy operationPolicy : operationPolicies) {
+                    String policyType = getProductPolicyType(operationPolicy, resource.getApiId(),
+                            apiProductOperationPolicyIdToClonedPolicyIdMap);
+                    operationPolicy.setPolicyType(policyType);
+                }
+            }
+            uriTemplate.setOperationPolicies(operationPolicies);
+            resource.setUriTemplate(uriTemplate);
+        }
+        product.setProductResources(productResources);
+    }
+
     @Override
     public boolean isSubscriptionValidationDisabled(String uuid) throws APIManagementException {
         String status = apiMgtDAO.getSubscriptionValidationStatus(uuid);
@@ -5341,6 +5428,7 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
                 populateApiInfo(api);
                 populateSubtypeConfiguration(api);
                 populateDefaultVersion(api);
+                populatePolicyTypeInAPI(api);
                 return api;
             } else {
                 String msg = "Failed to get API. API artifact corresponding to artifactId " + uuid + " does not exist";
@@ -5492,11 +5580,9 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
     private void populateApiInfo(APIProduct apiProduct) throws APIManagementException {
 
         APIInfo apiInfo;
-        if (apiProduct.isRevision()) {
-            apiInfo = apiMgtDAO.getAPIInfoByUUID(apiProduct.getRevisionedApiProductId());
-        } else {
-            apiInfo = apiMgtDAO.getAPIInfoByUUID(apiProduct.getUuid());
-        }
+        String apiProductId = apiProduct.isRevision() ? apiProduct.getRevisionedApiProductId() : apiProduct.getUuid();
+        apiInfo = apiMgtDAO.getAPIInfoByUUID(apiProductId);
+
         if (apiInfo != null) {
             apiProduct.setEgress(apiInfo.isEgress());
             apiProduct.setState(apiInfo.getStatus());
@@ -5520,6 +5606,7 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
                 if (migrationEnabled == null) {
                     populateDefaultVersion(product);
                 }
+                populatePolicyTypeInApiProduct(product);
                 return product;
             } else {
                 String msg = "Failed to get API Product. API Product artifact corresponding to artifactId " + uuid
@@ -5622,13 +5709,12 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
             if (publisherAPI != null) {
                 API api = APIMapper.INSTANCE.toApi(publisherAPI);
                 checkAccessControlPermission(userNameWithoutChange, api.getAccessControl(), api.getAccessControlRoles());
-                /// populate relavant external info
-                // environment
-                String environmentString = null;
-                if (api.getEnvironments() != null) {
-                    environmentString = String.join(",", api.getEnvironments());
-                }
-                api.setEnvironments(APIUtil.extractEnvironmentsForAPI(environmentString, organization));
+                // populate relevant external info environment
+                Map<String, Environment> environmentsMap = APIUtil.getEnvironments(organization);
+                Map<String, Environment> permittedGatewayEnvironments;
+                List<Environment> environmentList = new ArrayList<Environment>(environmentsMap.values());
+                permittedGatewayEnvironments = APIUtil.extractVisibleEnvironmentsForUser(environmentList, username);
+                api.setEnvironments(APIUtil.extractEnvironmentsForAPI(permittedGatewayEnvironments.toString(), organization));
                 //CORS . if null is returned, set default config from the configuration
                 if (api.getCorsConfiguration() == null) {
                     api.setCorsConfiguration(APIUtil.getDefaultCorsConfiguration());
@@ -7011,6 +7097,77 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
     }
 
     @Override
+    public List<Label> getAllLabels(String tenantDomain) throws APIManagementException {
+
+        return labelsDAO.getAllLabels(tenantDomain);
+    }
+
+    @Override
+    public List<Label> getAllLabelsOfApi(String apiID) throws APIManagementException {
+        API api = getAPIbyUUID(apiID, tenantDomain);
+        if (api == null) {
+            throw new APIMgtResourceNotFoundException("Couldn't retrieve existing API with ID: "
+                    + apiID, ExceptionCodes.from(ExceptionCodes.API_NOT_FOUND, apiID));
+        }
+        apiID = api.isRevision() ? api.getRevisionedApiId() : api.getUuid();
+        return labelsDAO.getMappedLabelsForApi(apiID);
+    }
+
+    @Override
+    public List<Label> attachApiLabels(String apiID, List<String> labelList, String tenantDomain)
+            throws APIManagementException {
+        API api = getAPIbyUUID(apiID, tenantDomain);
+        if (api == null || api.isRevision()) {
+            throw new APIMgtResourceNotFoundException("Couldn't retrieve existing API with ID: "
+                    + apiID, ExceptionCodes.from(ExceptionCodes.API_NOT_FOUND, apiID));
+        }
+        // validate labels
+        if (labelList.isEmpty()) {
+            throw new APIManagementException("No labels provided to attach to the API with ID: " + apiID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_ATTACHMENT_FAILED, "No labels provided"));
+        } else if (!allLabelsValid(labelList, tenantDomain)) {
+            throw new APIManagementException("Invalid label(s) provided to attach to the API with ID: " + apiID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_ATTACHMENT_FAILED, "Invalid label(s) provided"));
+        }
+        List<String> mappedLabelIDs = labelsDAO.getMappedLabelIDsForApi(apiID);
+        List<String> labelIDs = new ArrayList<>();
+        for (String labelID : labelList) {
+            if (!mappedLabelIDs.contains(labelID)) {
+                labelIDs.add(labelID);
+            }
+        }
+        labelsDAO.addApiLabelMappings(apiID, labelIDs);
+        return labelsDAO.getMappedLabelsForApi(apiID);
+    }
+
+    @Override
+    public List<Label> detachApiLabels(String apiID, List<String> labelList, String tenantDomain)
+            throws APIManagementException {
+        API api = getAPIbyUUID(apiID, tenantDomain);
+        if (api == null || api.isRevision()) {
+            throw new APIMgtResourceNotFoundException("Couldn't retrieve existing API with ID: "
+                    + apiID, ExceptionCodes.from(ExceptionCodes.API_NOT_FOUND, apiID));
+        }
+        // validate labels
+        if (labelList.isEmpty()) {
+            throw new APIManagementException("No labels provided to detach from the API with ID: " + apiID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_DETACHMENT_FAILED, "No labels provided"));
+        } else if (!allLabelsValid(labelList, tenantDomain)) {
+            throw new APIManagementException("Invalid label(s) provided to detach from the API with ID: " + apiID,
+                    ExceptionCodes.from(ExceptionCodes.LABEL_DETACHMENT_FAILED, "Invalid label(s) provided"));
+        }
+        List<String> mappedLabelIDs = labelsDAO.getMappedLabelIDsForApi(apiID);
+        List<String> labelIDs = new ArrayList<>();
+        for (String labelID : labelList) {
+            if (mappedLabelIDs.contains(labelID)) {
+                labelIDs.add(labelID);
+            }
+        }
+        labelsDAO.deleteApiLabelMappings(apiID, labelIDs);
+        return labelsDAO.getMappedLabelsForApi(apiID);
+    }
+
+    @Override
     public void setOperationPoliciesToURITemplates(String apiId, Set<URITemplate> uriTemplates)
             throws APIManagementException {
         //In case the mediation sequences are not migrated yet with an API update, force an API update to  make sure
@@ -7054,7 +7211,7 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
      * If there aren't any existing policies, a new API specific policy will be created.
      *
      * @param importedPolicyData Imported policy
-     * @param organization       Organization name
+     * @param organization Organization name
      * @return corrosponding policy ID for imported data
      * @throws APIManagementException if failed to delete APIRevision
      */
@@ -7103,6 +7260,87 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
                                 + ". A new policy created with ID " + policyId);
                     }
                 }
+            } else {
+                policyId = addAPISpecificOperationPolicy(importedPolicyData.getApiUUID(), importedPolicyData,
+                        organization);
+                if (log.isDebugEnabled()) {
+                    log.debug(
+                            "There aren't any existing policies for the imported policy. A new policy created with ID "
+                                    + policyId);
+                }
+            }
+        }
+
+        return policyId;
+    }
+
+    @Override
+    public String importOperationPolicyOfGivenType(OperationPolicyData importedPolicyData, String policyType,
+                                                   String organization) throws APIManagementException {
+
+        OperationPolicySpecification importedSpec = importedPolicyData.getSpecification();
+        OperationPolicyData existingOperationPolicy;
+
+        String policyId = null;
+        if (policyType == null) {
+            /*To handle scenarios where api is exported from a previous U2 version. API and Common policies with
+                same name and same version is not supported there
+             */
+            policyId = importOperationPolicy(importedPolicyData, organization);
+        } else if (policyType.equalsIgnoreCase(ImportExportConstants.POLICY_TYPE_COMMON)) {
+            existingOperationPolicy = getCommonOperationPolicyByPolicyName(importedSpec.getName(),
+                    importedSpec.getVersion(), organization, false);
+
+            if (existingOperationPolicy != null) {
+                if (existingOperationPolicy.getMd5Hash().equals(importedPolicyData.getMd5Hash())) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Matching common policy found for imported policy and Md5 hashes match.");
+                    }
+                    policyId = existingOperationPolicy.getPolicyId();
+                } else {
+                    importedSpec.setName(importedSpec.getName() + "_imported");
+                    importedSpec.setDisplayName(importedSpec.getDisplayName() + " Imported");
+                    importedPolicyData.setSpecification(importedSpec);
+                    importedPolicyData.setMd5Hash(APIUtil.getHashOfOperationPolicy(importedPolicyData));
+                    policyId = addAPISpecificOperationPolicy(importedPolicyData.getApiUUID(), importedPolicyData,
+                            organization);
+                    if (log.isDebugEnabled()) {
+                        log.debug("Even though existing common policy name match with imported policy, "
+                                + "the MD5 hashes does not match in the policy " + existingOperationPolicy.getPolicyId()
+                                + ". A new policy created with ID " + policyId);
+                    }
+                }
+            } else {
+                importedSpec.setName(importedSpec.getName() + "_imported");
+                importedSpec.setDisplayName(importedSpec.getDisplayName() + " Imported");
+                importedPolicyData.setSpecification(importedSpec);
+                importedPolicyData.setMd5Hash(APIUtil.getHashOfOperationPolicy(importedPolicyData));
+                policyId = addAPISpecificOperationPolicy(importedPolicyData.getApiUUID(), importedPolicyData,
+                        organization);
+                if (log.isDebugEnabled()) {
+                    log.debug("There is no common policy currently available for the imported policy. " +
+                                    "A new policy created with ID " + policyId);
+                }
+            }
+        } else { //api level policy by default
+            existingOperationPolicy =
+                    getAPISpecificOperationPolicyByPolicyName(importedSpec.getName(), importedSpec.getVersion(),
+                            importedPolicyData.getApiUUID(), null, organization, false);
+
+            if (existingOperationPolicy != null) {
+                if (existingOperationPolicy.getMd5Hash().equals(importedPolicyData.getMd5Hash())) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Matching API specific policy found for imported policy and MD5 hashes match.");
+                    }
+                } else {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Even though existing API specific policy name match with imported policy, "
+                                + "the MD5 hashes does not match in the policy " + existingOperationPolicy.getPolicyId()
+                                + ".Therefore updating the existing policy");
+                    }
+                    updateOperationPolicy(existingOperationPolicy.getPolicyId(), importedPolicyData, organization);
+                }
+                policyId = existingOperationPolicy.getPolicyId();
             } else {
                 policyId = addAPISpecificOperationPolicy(importedPolicyData.getApiUUID(), importedPolicyData,
                         organization);
@@ -7168,6 +7406,13 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
 
         return apiMgtDAO
                 .getAPISpecificOperationPolicyByPolicyID(policyId, apiUUID, organization, isWithPolicyDefinition);
+    }
+
+    public Map<String, String> getClonedAPISpecificOperationPolicyIdsList(String apiUUID)
+            throws APIManagementException {
+
+        return apiMgtDAO
+                .getClonedIdsMappedApiSpecificOperationPolicies(apiUUID);
     }
 
     @Override
@@ -7780,4 +8025,32 @@ class APIProviderImpl extends AbstractAPIManager implements APIProvider {
         }
     }
 
+    @Override
+    public List<OrganizationDetailsDTO> getOrganizations(String orgId, String tenantDomain) throws APIManagementException {
+        List<OrganizationDetailsDTO> organizationsList = apiMgtDAO.getChildOrganizations(orgId, tenantDomain);
+        return organizationsList;
+    }
+
+    private void removeAPILabelMappings(String apiId) throws APIManagementException {
+        try {
+            labelsDAO.deleteApiLabelMappings(apiId, labelsDAO.getMappedLabelIDsForApi(apiId));
+        } catch (APIManagementException e) {
+            throw new APIManagementException("Error while removing label mappings for API " + apiId, e);
+        }
+    }
+
+    private boolean allLabelsValid(List<String> labelIDs, String tenantDomain)
+            throws APIManagementException {
+        try {
+            List<String> availableLabels = labelsDAO.getAllLabelIDs(tenantDomain);
+            for (String label : labelIDs) {
+                if (!availableLabels.contains(label)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (APIManagementException e) {
+            throw new APIManagementException("Error while validating attached labels", e);
+        }
+    }
 }

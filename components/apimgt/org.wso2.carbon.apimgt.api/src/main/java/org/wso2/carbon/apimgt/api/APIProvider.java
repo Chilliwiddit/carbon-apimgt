@@ -23,6 +23,7 @@ import org.wso2.carbon.apimgt.api.dto.CertificateInformationDTO;
 import org.wso2.carbon.apimgt.api.dto.CertificateMetadataDTO;
 import org.wso2.carbon.apimgt.api.dto.ClientCertificateDTO;
 import org.wso2.carbon.apimgt.api.dto.EnvironmentPropertiesDTO;
+import org.wso2.carbon.apimgt.api.dto.OrganizationDetailsDTO;
 import org.wso2.carbon.apimgt.api.dto.UserApplicationAPIUsage;
 import org.wso2.carbon.apimgt.api.dto.WorkflowDTO;
 import org.wso2.carbon.apimgt.api.model.*;
@@ -1534,6 +1535,46 @@ public interface APIProvider extends APIManager {
     Environment getEnvironment(String organization, String uuid) throws APIManagementException;
 
     /**
+     * Returns all labels of the tenant
+     *
+     * @param tenantDomain    tenant domain
+     * @return List<Label> list of Label objects
+     * @throws APIManagementException if failed to get labels
+     */
+    List<Label> getAllLabels(String tenantDomain) throws APIManagementException;
+
+    /**
+     * Returns all attached labels of the API
+     *
+     * @param apiID      API UUID
+     * @return List<Label> list of Label objects
+     * @throws APIManagementException if failed to get labels
+     */
+    List<Label> getAllLabelsOfApi(String apiID) throws APIManagementException;
+
+    /**
+     * Attach labels to an API
+     *
+     * @param apiID        API UUID
+     * @param labelList    List of Labels
+     * @param tenantDomain Tenant domain
+     * @return List<String> list of Label IDs
+     * @throws APIManagementException if failed to get labels
+     */
+    List<Label> attachApiLabels(String apiID, List<String> labelList, String tenantDomain) throws APIManagementException;
+
+    /**
+     * Detach labels from an API
+     *
+     * @param apiID        API UUID
+     * @param labelList    List of Labels
+     * @param tenantDomain Tenant domain
+     * @return List<String> list of Label IDs
+     * @throws APIManagementException if failed to get labels
+     */
+    List<Label> detachApiLabels(String apiID, List<String> labelList, String tenantDomain) throws APIManagementException;
+
+    /**
      * Set existing operation policy mapping to the URI Templates
      *
      * @param apiId        API UUID
@@ -1543,8 +1584,10 @@ public interface APIProvider extends APIManager {
     void setOperationPoliciesToURITemplates(String apiId, Set<URITemplate> uriTemplates) throws APIManagementException;
 
     /**
-     * Import an operation policy from the API CTL project. This will either create a new API specific policy,
-     * update existing API specific policy or return the policyID of existing policy if policy content is not changed.
+     * Import an operation policy from the API CTL project which is exported from a product version prior to the update
+     * level which introduced to have an API and a Common policy with identical names and versions.
+     * This will either create a new API specific policy, update existing API specific policy or return the
+     * policyID of existing policy if policy content is not changed.
      *
      * @param operationPolicyData Operation Policy Data
      * @param organization        Organization name
@@ -1553,6 +1596,21 @@ public interface APIProvider extends APIManager {
      */
     String importOperationPolicy(OperationPolicyData operationPolicyData, String organization)
             throws APIManagementException;
+
+    /**
+     * Import an operation policy of a given policy type, from the API CTL project.
+     * This will either create a new API specific policy, update existing API specific policy or return the
+     * policyID of existing policy if policy content is not changed.
+     *
+     * @param operationPolicyData Operation Policy Data
+     * @param organization        Organization name
+     * @param policyType Policy Type
+     * @return UUID of the imported operation policy
+     * @throws APIManagementException
+     */
+    String importOperationPolicyOfGivenType(OperationPolicyData operationPolicyData, String policyType,
+                                            String organization) throws APIManagementException;
+
 
     /**
      * Add an API specific operation policy
@@ -2035,4 +2093,14 @@ public interface APIProvider extends APIManager {
      * @throws APIManagementException
      */
     WorkflowDTO retrieveWorkflow(String workflowReferenceID) throws APIManagementException;
+
+    /**
+     * 
+     * Retrieves list of organizations available for the given parent organization.
+     * 
+     * @param parentOrgId parent organization id
+     * @param tenantDomain super domain
+     * @return organization list
+     */
+    List<OrganizationDetailsDTO> getOrganizations(String orgId, String superOrganization) throws APIManagementException;
 }

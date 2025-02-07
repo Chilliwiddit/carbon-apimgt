@@ -18,6 +18,7 @@
 
 package org.wso2.carbon.apimgt.impl.utils;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -74,6 +75,7 @@ import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 import org.wso2.carbon.CarbonConstants;
+import org.wso2.carbon.apimgt.api.APIAdmin;
 import org.wso2.carbon.apimgt.api.APIManagementException;
 import org.wso2.carbon.apimgt.api.APIMgtAuthorizationFailedException;
 import org.wso2.carbon.apimgt.api.APIMgtInternalException;
@@ -88,7 +90,9 @@ import org.wso2.carbon.apimgt.api.doc.model.APIDefinition;
 import org.wso2.carbon.apimgt.api.doc.model.APIResource;
 import org.wso2.carbon.apimgt.api.doc.model.Operation;
 import org.wso2.carbon.apimgt.api.doc.model.Parameter;
+import org.wso2.carbon.apimgt.api.dto.GatewayVisibilityPermissionConfigurationDTO;
 import org.wso2.carbon.apimgt.api.dto.KeyManagerConfigurationDTO;
+import org.wso2.carbon.apimgt.api.dto.OrganizationDetailsDTO;
 import org.wso2.carbon.apimgt.api.model.API;
 import org.wso2.carbon.apimgt.api.model.APICategory;
 import org.wso2.carbon.apimgt.api.model.APIIdentifier;
@@ -166,6 +170,7 @@ import org.wso2.carbon.apimgt.impl.dto.SubscriptionPolicyDTO;
 import org.wso2.carbon.apimgt.impl.dto.ThrottleProperties;
 import org.wso2.carbon.apimgt.impl.dto.WorkflowDTO;
 import org.wso2.carbon.apimgt.impl.gatewayartifactsynchronizer.exception.DataLoadingException;
+import org.wso2.carbon.apimgt.impl.importexport.ImportExportConstants;
 import org.wso2.carbon.apimgt.impl.internal.APIManagerComponent;
 import org.wso2.carbon.apimgt.impl.internal.ServiceReferenceHolder;
 import org.wso2.carbon.apimgt.impl.kmclient.ApacheFeignHttpClient;
@@ -178,6 +183,8 @@ import org.wso2.carbon.apimgt.impl.notifier.events.SubscriptionPolicyEvent;
 import org.wso2.carbon.apimgt.impl.notifier.exceptions.NotifierException;
 import org.wso2.carbon.apimgt.impl.recommendationmgt.RecommendationEnvironment;
 import org.wso2.carbon.apimgt.impl.resolver.OnPremResolver;
+import org.wso2.carbon.apimgt.persistence.dto.DevPortalAPIInfo;
+import org.wso2.carbon.apimgt.persistence.dto.OrganizationTiers;
 import org.wso2.carbon.base.MultitenantConstants;
 import org.wso2.carbon.base.ServerConfiguration;
 import org.wso2.carbon.context.CarbonContext;
@@ -198,6 +205,7 @@ import org.wso2.carbon.governance.api.generic.GenericArtifactManager;
 import org.wso2.carbon.governance.api.generic.dataobjects.GenericArtifact;
 import org.wso2.carbon.governance.api.util.GovernanceUtils;
 import org.wso2.carbon.identity.core.util.IdentityCoreConstants;
+import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.oauth.OAuthAdminService;
 import org.wso2.carbon.identity.oauth.config.OAuthServerConfiguration;
 import org.wso2.carbon.registry.core.ActionConstants;
@@ -253,6 +261,7 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.rmi.RemoteException;
 import java.security.*;
 import java.security.cert.Certificate;
@@ -271,6 +280,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -288,6 +298,8 @@ import javax.cache.CacheConfiguration;
 import javax.cache.CacheManager;
 import javax.cache.Caching;
 import java.security.cert.X509Certificate;
+import java.text.Normalizer;
+
 import javax.validation.constraints.NotNull;
 import javax.xml.XMLConstants;
 import javax.xml.namespace.QName;
@@ -349,6 +361,9 @@ public final class APIUtil {
     private static Schema operationPolicySpecSchema;
     private static final String contextRegex = "^[a-zA-Z0-9_${}/.;()-]+$";
     private static String hashingAlgorithm = SHA_256;
+    
+    private static final Pattern NONLATIN = Pattern.compile("[^\\w-]");
+    private static final Pattern WHITESPACE = Pattern.compile("[\\s]");
 
     private APIUtil() {
 
@@ -680,6 +695,10 @@ public final class APIUtil {
                 }
             }
 
+            // Set available tiers for organizations
+            String organizationTiers = artifact.getAttribute(APIConstants.API_OVERVIEW_ORGANIZATION_TIERS);
+            api.setAvailableTiersForOrganizations(getAvailableTiersForOrganizationsFromString(organizationTiers));
+
             api.addAvailableTiers(availablePolicy);
             String tenantDomainName = MultitenantUtils.getTenantDomain(replaceEmailDomainBack(providerName));
             api.setMonetizationCategory(getAPIMonetizationCategory(availablePolicy, tenantDomainName));
@@ -804,6 +823,11 @@ public final class APIUtil {
                 }
             }
             api.addAvailableTiers(availablePolicy);
+
+            // Set available tiers for organizations
+            String organizationTiers = artifact.getAttribute(APIConstants.API_OVERVIEW_ORGANIZATION_TIERS);
+            api.setAvailableTiersForOrganizations(getAvailableTiersForOrganizationsFromString(organizationTiers));
+
             String tenantDomainName = MultitenantUtils.getTenantDomain(replaceEmailDomainBack(providerName));
             api.setMonetizationCategory(getAPIMonetizationCategory(availablePolicy, tenantDomainName));
 
@@ -983,6 +1007,11 @@ public final class APIUtil {
                 artifact.setAttribute(APIConstants.API_OVERVIEW_TIER, tiers);
             }
 
+            if (getAvailableTiersForOrganizationsAsString(api) != null) {
+                artifact.setAttribute(APIConstants.API_OVERVIEW_ORGANIZATION_TIERS,
+                        getAvailableTiersForOrganizationsAsString(api));
+            }
+
             if (APIConstants.PUBLISHED.equals(apiStatus)) {
                 artifact.setAttribute(APIConstants.API_OVERVIEW_IS_LATEST, "true");
             }
@@ -1039,6 +1068,7 @@ public final class APIUtil {
             if (apiSecurity != null && !apiSecurity.contains(APIConstants.DEFAULT_API_SECURITY_OAUTH2) &&
                     !apiSecurity.contains(APIConstants.API_SECURITY_API_KEY)) {
                 artifact.setAttribute(APIConstants.API_OVERVIEW_TIER, "");
+                artifact.setAttribute(APIConstants.API_OVERVIEW_ORGANIZATION_TIERS, "");
             }
         } catch (GovernanceException e) {
             String msg = "Failed to create API for : " + api.getId().getApiName();
@@ -1402,6 +1432,23 @@ public final class APIUtil {
 
         return APIConstants.API_ROOT_LOCATION + RegistryConstants.PATH_SEPARATOR + apiProvider + RegistryConstants.PATH_SEPARATOR +
                 apiName + RegistryConstants.PATH_SEPARATOR + apiVersion + RegistryConstants.PATH_SEPARATOR;
+    }
+
+    /**
+     * Utility method to get the introspection query for GraphQL
+     * @return introspection query
+     * @throws APIManagementException
+     */
+    public static String getIntrospectionQuery() throws APIManagementException {
+        String introspectionQueryFilePath = APIConstants.GRAPHQL_INTROSPECTION_QUERY_FILE;
+        try (InputStream fileStream = APIUtil.class.getClassLoader().getResourceAsStream(introspectionQueryFilePath)) {
+            if (fileStream == null) {
+                throw new APIManagementException("Graphql introspection query file not found: " + introspectionQueryFilePath);
+            }
+            return IOUtils.toString(fileStream, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new APIManagementException("Error reading graphql introspection query file", e);
+        }
     }
 
     public static String getRevisionPath(String apiUUID, int revisionId) {
@@ -2475,7 +2522,6 @@ public final class APIUtil {
      * Retrieves the role list of a user
      *
      * @param username A username
-     * @param username A username
      * @throws APIManagementException If an error occurs
      */
     public static String[] getListOfRoles(String username) throws APIManagementException {
@@ -2494,6 +2540,10 @@ public final class APIUtil {
         try {
             int tenantId = ServiceReferenceHolder.getInstance().getRealmService().getTenantManager()
                     .getTenantId(tenantDomain);
+            // If tenant Id is not set in the tokenReqContext, deriving it from username.
+            if (tenantId == 0 || tenantId == -1) {
+                tenantId = IdentityTenantUtil.getTenantIdOfUser(username);
+            }
             UserStoreManager manager = ServiceReferenceHolder.getInstance().getRealmService()
                     .getTenantUserRealm(tenantId).getUserStoreManager();
             roles = manager.getRoleListOfUser(MultitenantUtils.getTenantAwareUsername(username));
@@ -2690,6 +2740,10 @@ public final class APIUtil {
             Map<String, Tier> definedTiers = getTiers(tenantId);
             Set<Tier> availableTier = getAvailableTiers(definedTiers, tiers, apiName);
             api.addAvailableTiers(availableTier);
+
+            // Set available tiers for organizations
+            String organizationTiers = artifact.getAttribute(APIConstants.API_OVERVIEW_ORGANIZATION_TIERS);
+            api.setAvailableTiersForOrganizations(getAvailableTiersForOrganizationsFromString(organizationTiers));
 
             api.setContext(artifact.getAttribute(APIConstants.API_OVERVIEW_CONTEXT));
             api.setContextTemplate(artifact.getAttribute(APIConstants.API_OVERVIEW_CONTEXT_TEMPLATE));
@@ -3561,6 +3615,27 @@ public final class APIUtil {
     public static float getAverageRating(int apiId) throws APIManagementException {
 
         return ApiMgtDAO.getInstance().getAverageRating(apiId);
+    }
+
+    /**
+     * Update available tiers in the DevPortalAPIInfo according to the organization.
+     * @param devPortalAPIInfo  DevPortalAPIInfo object
+     * @param organization      Organization ID
+     */
+    public static void updateAvailableTiersByOrganization(DevPortalAPIInfo devPortalAPIInfo, String organization) {
+
+        Set<String> availableTiers = devPortalAPIInfo.getAvailableTierNames();
+        Set<OrganizationTiers> availableTiersForOrganizations = devPortalAPIInfo.getAvailableTiersForOrganizations();
+        if (organization != null) {
+            for (OrganizationTiers organizationTiers : availableTiersForOrganizations) {
+                String orgID = organizationTiers.getOrganizationID();
+                if (organization.equals(orgID)) {
+                    availableTiers = organizationTiers.getTiers();
+                    devPortalAPIInfo.setAvailableTierNames(availableTiers);
+                    break;
+                }
+            }
+        }
     }
 
     public static List<Tenant> getAllTenantsWithSuperTenant() throws UserStoreException {
@@ -5031,25 +5106,124 @@ public final class APIUtil {
         return environmentStringSet;
     }
 
+    public static Set<String> extractVisibleEnvironmentsForUser(List<Environment> environments, String organization, String username) throws APIManagementException {
+
+        Map<String, Environment> permittedEnvironments;
+        if (environments != null) {
+            permittedEnvironments = extractVisibleEnvironmentsForUser(environments, username);
+        } else {
+            Map<String, Environment> environmentsMap = getEnvironments(organization);
+            List<Environment> environmentsList = new ArrayList<Environment>(environmentsMap.values());
+            permittedEnvironments = extractVisibleEnvironmentsForUser(environmentsList, username);
+        }
+        return permittedEnvironments.keySet();
+    }
+
+    public static Map<String, Environment> extractVisibleEnvironmentsForUser(List<Environment> environments, String username) throws APIManagementException {
+
+        Map<String, Environment> permittedGatewayEnvironments = new LinkedHashMap<>();
+        if (environments.size() > 0) {
+            for (Environment environment : environments) {
+                if (isGatewayAllowedForUser(environment, username)) {
+                    permittedGatewayEnvironments.put(environment.getName(), environment);
+                }
+            }
+        }
+        return permittedGatewayEnvironments;
+    }
+
+    /**
+     * This method is used to check if gateway environment is allowed for user
+     *
+     * @param environment gateway environment
+     * @param username  username of the logged-in user
+     * @return boolean returns if the gateway environment is allowed for the logged-in user
+     * @throws APIManagementException if error occurred
+     */
+    public static boolean isGatewayAllowedForUser(Environment environment, String username) throws APIManagementException {
+
+        GatewayVisibilityPermissionConfigurationDTO permissions;
+        if (environment.getPermissions() == null) {
+            APIAdmin apiAdmin = new APIAdminImpl();
+            permissions = apiAdmin.getGatewayVisibilityPermissions(environment.getUuid());
+        } else {
+            permissions = environment.getPermissions();
+        }
+        String permissionType = permissions.getPermissionType();
+        if (permissions != null && !permissionType.equals(APIConstants.PERMISSION_NOT_RESTRICTED)) {
+            String[] permissionRoles = permissions.getRoles()
+                    .stream()
+                    .toArray(String[]::new);
+            String[] userRoles = APIUtil.getListOfRoles(username);
+            boolean roleIsRestricted = hasIntersection(userRoles, permissionRoles);
+            if ((APIConstants.PERMISSION_ALLOW.equals(permissionType) && !roleIsRestricted)
+                    || (APIConstants.PERMISSION_DENY.equals(permissionType) && roleIsRestricted)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean hasIntersection(String[] arr1, String[] arr2) {
+
+        Set<String> set = new HashSet<>();
+
+        for (String element : arr1) {
+            set.add(element);
+        }
+
+        for (String element : arr2) {
+            if (set.contains(element)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static Set<String> extractEnvironmentsForAPI(String environments, String organization) throws APIManagementException {
 
         Set<String> environmentStringSet = null;
         if (environments == null) {
             environmentStringSet = new HashSet<>(getEnvironments(organization).keySet());
         } else {
-            //handle not to publish to any of the gateways
+            // Handle not to publish to any of the gateways
             if (APIConstants.API_GATEWAY_NONE.equals(environments)) {
                 environmentStringSet = new HashSet<String>();
             }
-            //handle to set published gateways nto api object
+            // Handle to set published gateways into api object
             else if (!"".equals(environments)) {
                 String[] publishEnvironmentArray = environments.split(",");
                 environmentStringSet = new HashSet<String>(Arrays.asList(publishEnvironmentArray));
                 environmentStringSet.remove(APIConstants.API_GATEWAY_NONE);
             }
-            //handle to publish to any of the gateways when api creating stage
+            // Handle to publish to any of the gateways when api creating stage
             else if ("".equals(environments)) {
                 environmentStringSet = new HashSet<>(getEnvironments(organization).keySet());
+            }
+        }
+
+        return environmentStringSet;
+    }
+
+    public static Set<String> extractEnvironmentsForAPI(List<Environment> environments, String organization, String userName) throws APIManagementException {
+
+        Set<String> environmentStringSet = null;
+        if (environments == null) {
+            environmentStringSet = extractVisibleEnvironmentsForUser(null, organization, userName);
+        } else {
+            // Handle not to publish to any of the gateways
+            if (environments.contains(APIConstants.API_GATEWAY_NONE)) {
+                environmentStringSet = new HashSet<String>();
+            }
+            // Handle to set published gateways into api object
+            else if (!environments.isEmpty()) {
+                environmentStringSet = extractVisibleEnvironmentsForUser(environments, organization, userName);
+                environmentStringSet.remove(APIConstants.API_GATEWAY_NONE);
+            }
+            // Handle to publish to any of the gateways when api creating stage
+            else if ("".equals(environments)) {
+                environmentStringSet = extractVisibleEnvironmentsForUser(environments, organization, userName);
             }
         }
 
@@ -5120,6 +5294,24 @@ public final class APIUtil {
 
         for (Environment environment : gatewayEnvironments.values()) {
             for (String apiEnvironment : apiEnvironments) {
+                if (environment.getName().equals(apiEnvironment)) {
+                    returnEnvironments.add(environment);
+                    break;
+                }
+            }
+        }
+        return returnEnvironments;
+    }
+
+    public static List<Environment> getEnvironmentsOfAPIProduct(APIProduct apiProduct) throws APIManagementException {
+
+        String organization = apiProduct.getOrganization();
+        Map<String, Environment> gatewayEnvironments = getEnvironments(organization);
+        Set<String> apiProductEnvironments = apiProduct.getEnvironments();
+        List<Environment> returnEnvironments = new ArrayList<Environment>();
+
+        for (Environment environment : gatewayEnvironments.values()) {
+            for (String apiEnvironment : apiProductEnvironments) {
                 if (environment.getName().equals(apiEnvironment)) {
                     returnEnvironments.add(environment);
                     break;
@@ -10028,6 +10220,15 @@ public final class APIUtil {
     }
 
     /**
+     * Get org access control enabled status
+     * 
+     * @return true or false
+     */
+    public static boolean isOrganizationAccessControlEnabled() {
+        return ServiceReferenceHolder.getInstance().getAPIManagerConfigurationService().getAPIManagerConfiguration()
+                .getOrgAccessControl().isEnabled();
+    }
+    /**
      * Get registered API Definition Parsers as a Map
      *
      * @return Map of Registered API Definition Parsers
@@ -10088,8 +10289,9 @@ public final class APIUtil {
                                 OperationPolicyData policyData = new OperationPolicyData();
                                 policyData.setSpecification(policySpec);
                                 policyData.setOrganization(organization);
+                                //since the directory contains common policies only, files are not renamed with type
                                 String policyFileName = getOperationPolicyFileName(policySpec.getName(),
-                                        policySpec.getVersion());
+                                        policySpec.getVersion(), null);
                                 OperationPolicyDefinition synapsePolicyDefinition =
                                         getOperationPolicyDefinitionFromFile(policyDefinitionLocation,
                                                 policyFileName, APIConstants.SYNAPSE_POLICY_DEFINITION_EXTENSION);
@@ -10413,11 +10615,14 @@ public final class APIUtil {
     }
 
 
-    public static String getOperationPolicyFileName(String policyName, String policyVersion) {
+    public static String getOperationPolicyFileName(String policyName, String policyVersion, String policyType) {
         if (StringUtils.isEmpty(policyVersion)) {
             policyVersion = "v1";
         }
-        return policyName + "_" + policyVersion;
+        if (policyType == null) {
+            return policyName + "_" + policyVersion;
+        }
+        return policyName + "_" + policyVersion + "_" + policyType;
     }
 
     public static String getCustomBackendFileName(String apiUUID, String endpointType) {
@@ -10829,7 +11034,7 @@ public final class APIUtil {
         }
         return applications.subList(offset, endIndex);
     }
-
+    
     public static String getAPIMVersion() {
         return CarbonUtils.getServerConfiguration().getFirstProperty("Version");
     }
@@ -10987,5 +11192,87 @@ public final class APIUtil {
 
         return Boolean.getBoolean(
                 APIConstants.ORGANIZATION_WIDE_APPLICATION_UPDATE_ENABLED);
+    }
+
+    /**
+     * Get available tiers for organizations as a string.
+     *
+     * @param api API object
+     * @return String object of the organization based tiers
+     */
+    private static String getAvailableTiersForOrganizationsAsString(API api) {
+
+        Set<org.wso2.carbon.apimgt.api.model.OrganizationTiers> availableTiersForOrganizations
+                = api.getAvailableTiersForOrganizations();
+        if (availableTiersForOrganizations == null || availableTiersForOrganizations.isEmpty()) {
+            return null;
+        }
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            return objectMapper.writeValueAsString(availableTiersForOrganizations);
+        } catch (JsonProcessingException e) {
+            log.error("Error while converting availableTiersForOrganizations to string for API : " + api.getUuid(), e);
+            return null;
+        } catch (Exception e) {
+            log.error("Unexpected error while processing availableTiersForOrganizations for API : " + api.getUuid(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Convert string object to a OrganizationTiers set.
+     *
+     * @param tiersString String object to be converted
+     * @return OrganziationTiers set
+     */
+    public static Set<org.wso2.carbon.apimgt.api.model.OrganizationTiers> getAvailableTiersForOrganizationsFromString(
+            String tiersString) {
+
+        if (tiersString == null || tiersString.isEmpty()) {
+            return new LinkedHashSet<>();
+        }
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            org.wso2.carbon.apimgt.api.model.OrganizationTiers[] tiersArray = objectMapper.readValue(tiersString,
+                    org.wso2.carbon.apimgt.api.model.OrganizationTiers[].class);
+            return new LinkedHashSet<>(Arrays.asList(tiersArray));
+        } catch (Exception e) {
+            log.error("Error while converting string to availableTiersForOrganizations object", e);
+            return new LinkedHashSet<>();
+        }
+    }
+    
+    public static synchronized String getOrganizationIdFromExternalReference(String referenceId,
+            String organizationName, String rootOrganization) throws APIManagementException {
+        String organizationId = null;
+        OrganizationDetailsDTO orgDetails = ApiMgtDAO.getInstance().getOrganizationDetalsByExternalOrgId(referenceId,
+                rootOrganization);
+        if (orgDetails != null) {
+            organizationId = orgDetails.getOrganizationId();
+        } else {
+            // No organization entry in the db. add entry without parent info.
+            OrganizationDetailsDTO info = new OrganizationDetailsDTO();
+            info.setExternalOrganizationReference(referenceId);
+            info.setName(organizationName);
+            info.setOrganizationHandle(getOrganizationHandle(organizationName));
+            OrganizationDetailsDTO addedInfo = ApiMgtDAO.getInstance().addOrganization(info, null, rootOrganization);
+            if (addedInfo != null) {
+                organizationId = addedInfo.getOrganizationId();
+            }
+        }
+        return organizationId;
+    }
+    
+    public static String getOrganizationHandle(String name) {
+        String sanatizedName = null;
+        if (name == null) {
+            return sanatizedName;
+        }
+        String nowhitespace = WHITESPACE.matcher(name).replaceAll("-"); // Replace spaces with hyphens
+        String normalized = Normalizer.normalize(nowhitespace, Normalizer.Form.NFD); // Decompose Unicode characters
+        sanatizedName = NONLATIN.matcher(normalized).replaceAll(""); // Remove non-alphanumeric characters
+        // Convert to lowercase and trim hyphens from the beginning/end
+        sanatizedName = sanatizedName.toLowerCase(Locale.ENGLISH).replaceAll("^-+|-+$", "");
+        return sanatizedName;
     }
 }

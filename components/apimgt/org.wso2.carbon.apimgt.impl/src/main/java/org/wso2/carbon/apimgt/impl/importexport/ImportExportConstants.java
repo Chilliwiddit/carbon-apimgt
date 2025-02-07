@@ -203,7 +203,7 @@ public final class ImportExportConstants {
 
     public static final String TYPE_POLICY_SPECIFICATION = "operation_policy_specification";
 
-    public static final String APIM_VERSION = "v4.4.0";
+    public static final String APIM_VERSION = "v4.5.0";
 
     public static final String ENDPOINT_CONFIG = "endpointConfig";
 
@@ -316,4 +316,7 @@ public final class ImportExportConstants {
     public static final String EXPORT_POLICY_TYPE_JSON = "JSON";
 
     public static final String POLICY_NAME = "name";
+
+    public static final String POLICY_TYPE_API = "api";
+    public static final String POLICY_TYPE_COMMON = "common";
 }
